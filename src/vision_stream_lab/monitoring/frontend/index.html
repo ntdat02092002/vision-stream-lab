@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b12">
+  <title>Vision Stream Lab — Camera Wall</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div><h1>Vision Stream Lab</h1><p>AI camera wall</p></div>
+    </div>
+    <div class="system-status">
+      <span class="live-pulse"></span><span id="connection-label">Connecting</span>
+      <span class="separator"></span><time id="clock"></time>
+    </div>
+    <div class="toolbar">
+      <label><span>Pipeline</span><select id="use-case" aria-label="Select AI pipeline"></select></label>
+      <label>
+        <span>Layout</span>
+        <select id="columns" aria-label="Camera wall columns">
+          <option value="auto">Auto</option><option value="1">1 column</option>
+          <option value="2">2 columns</option><option value="3">3 columns</option>
+          <option value="4">4 columns</option>
+        </select>
+      </label>
+      <button id="wall-fullscreen" class="icon-button" type="button" title="Fullscreen wall" aria-label="Fullscreen wall">⛶</button>
+    </div>
+  </header>
+
+  <section class="overview" aria-label="System summary">
+    <div><span class="overview-label">Cameras</span><strong id="camera-count">—</strong></div>
+    <div><span class="overview-label">Online</span><strong id="online-count">—</strong></div>
+    <div><span class="overview-label">Use-case batch</span><strong id="batch-size">—</strong></div>
+    <div><span class="overview-label">Shard</span><strong id="shard">—</strong></div>
+    <div><span class="overview-label">Transport</span><strong id="transport">MJPEG</strong></div>
+  </section>
+
+  <main id="camera-wall" class="camera-wall" data-columns="auto" aria-live="polite"></main>
+
+  <template id="camera-template">
+    <article class="camera-card">
+      <div class="viewport">
+        <img class="camera-stream" alt="" draggable="false">
+        <div class="scanline" aria-hidden="true"></div>
+        <div class="camera-heading">
+          <div><span class="status-dot"></span><strong class="camera-name"></strong></div>
+          <span class="camera-id"></span>
+        </div>
+        <div class="stream-state">Waiting for stream</div>
+        <button class="card-fullscreen" type="button" title="Fullscreen camera" aria-label="Fullscreen camera">⛶</button>
+        <div class="event-badge"></div>
+      </div>
+      <footer class="telemetry">
+        <div><span>Capture</span><strong class="capture-fps">—</strong><small>FPS</small></div>
+        <div><span>Inference</span><strong class="inference-fps">—</strong><small>FPS</small></div>
+        <div><span>Output</span><strong class="output-fps">—</strong><small>FPS</small></div>
+        <div><span>Latency</span><strong class="latency">—</strong><small>MS</small></div>
+        <div><span>Frames</span><strong class="frames">—</strong><small>AI / RAW</small></div>
+      </footer>
+    </article>
+  </template>
+
+  <div id="empty-state" class="empty-state" hidden>
+    <strong>No cameras available</strong><span>Check camera configuration and runtime status.</span>
+  </div>
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

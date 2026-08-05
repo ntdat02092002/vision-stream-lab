@@ -1,0 +1,10 @@
+inference:
+  $ref: inference/detection/yolo11n_onnx.yaml
+
+tracker:
+  enabled: false
+  iou_threshold: 0.10
+  max_missed: 0
+  process_noise: 10.0
+  measurement_noise: 2.0
+  max_extrapolation_ms: 150

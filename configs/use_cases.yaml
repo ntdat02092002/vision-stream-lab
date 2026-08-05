@@ -1,0 +1,16 @@
+use_cases:
+  - id: object-detection
+    type: object_detection
+    enabled: true
+    cameras: ["*"]
+    config_path: usecases/object_detection.yaml
+    alert_config_path: alerts/object_detection.yaml
+    runtime:
+      batch_size: 4
+    # Current road-camera experiment. This is applied after the reusable
+    # YOLO11 COCO preset, without changing that preset's standard defaults.
+    overrides:
+      inference:
+        confidence: 0.2
+        # person, bicycle, car, motorcycle, bus, truck (COCO class IDs)
+        classes: [0, 1, 2, 3, 5, 7]

@@ -1,0 +1,4 @@
+enabled: false
+output_dir: outputs/alerts/object-detection
+min_events: 1
+cooldown_seconds: 30

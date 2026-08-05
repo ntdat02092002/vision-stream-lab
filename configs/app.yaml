@@ -1,0 +1,24 @@
+runtime:
+  batch_size: 4
+  batch_wait_ms: 12
+  queue_timeout_ms: 250
+  shard_index: 0
+  shard_count: 1
+
+frame:
+  width: 1280
+  height: 720
+
+monitoring:
+  host: 0.0.0.0
+  port: 18080
+  jpeg_quality: 80
+  stream_fps: 12
+  render_mode: delayed_matched  # delayed_matched | inference_only | latest_predictions
+  prediction_ttl_ms: 500
+  alignment_delay_ms: 250
+  frame_buffer_size: 16
+
+config_files:
+  cameras: cameras.yaml
+  use_cases: use_cases.yaml
