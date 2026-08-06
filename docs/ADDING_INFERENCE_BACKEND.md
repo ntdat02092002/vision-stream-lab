@@ -27,11 +27,18 @@ inference/
 │
 └── detection/
     ├── base.py                     DetectionBackend specialization
-    ├── config.py                   backend selection and detector settings
+    ├── config.py                   family-agnostic structural config contract
     ├── schema.py                   DetectionPrediction
-    ├── factory.py                  lazy backend construction
-    ├── noop.py                     test backend
+    ├── plugin.py                   family plugin descriptor
+    ├── registry.py                 auto-discovery by model_family
+    ├── factory.py                  delegate to selected family plugin
+    ├── noop/
+    │   ├── config.py
+    │   ├── plugin.py
+    │   └── backend.py
     └── yolo/
+        ├── config.py               YOLO backend configs and parser
+        ├── plugin.py               YOLO backend factory
         ├── preprocessing.py        BGR → letterboxed BCHW tensor
         ├── postprocessing.py       decode, filter, NMS, restore coordinates
         ├── onnx.py                 ONNX Runtime session adapter
@@ -133,12 +140,12 @@ Example: add a TensorRT YOLO adapter.
 
 ### Step 1 — Extend backend selection
 
-In `inference/detection/config.py`:
+In `inference/detection/yolo/config.py`:
 
 ```python
-class DetectionBackendType(str, Enum):
+class YoloBackendType(str, Enum):
     ...
-    TENSORRT_YOLO = "tensorrt"
+    TENSORRT = "tensorrt"
 ```
 
 Keep YAML values stable because deployments refer to them.
@@ -153,7 +160,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from ..base import DetectionBackend
-from ..config import TensorRtYoloConfig
+from .config import TensorRtYoloConfig
 from ..schema import DetectionPrediction
 
 
@@ -190,10 +197,10 @@ the model is called YOLO.
 
 ### Step 3 — Add lazy factory construction
 
-In `inference/detection/factory.py`:
+In `inference/detection/yolo/plugin.py`:
 
 ```python
-if config.backend is DetectionBackendType.TENSORRT_YOLO:
+if isinstance(config, TensorRtYoloConfig):
     from .yolo.tensorrt import TensorRtYoloBackend
 
     return TensorRtYoloBackend(config, project_root)
@@ -205,12 +212,13 @@ constructor. A CPU ONNX deployment must not require TensorRT to be installed.
 ### Step 4 — Add configuration
 
 Add an immutable backend-specific dataclass such as `TensorRtYoloConfig`, include
-it in `DetectionBackendConfig`, and dispatch to it from
-`parse_detection_backend_config()`. Do not put TensorRT-only fields on the ONNX
-or Triton configs and do not use an untyped catch-all dictionary.
+it in the family-owned `YoloConfig` union, and dispatch to it from
+`parse_yolo_config()`. Do not put TensorRT-only fields on the ONNX or Triton
+configs and do not use an untyped catch-all dictionary.
 
 ```yaml
-# configs/inference/detection/yolo11n_tensorrt.yaml
+# configs/inference/detection/yolo/yolo11n_tensorrt.yaml
+model_family: yolo
 backend: tensorrt
 model_path: models/yolo11n.engine
 image_size: 640
@@ -223,7 +231,7 @@ Reference the preset from a plugin config:
 
 ```yaml
 inference:
-  $ref: inference/detection/yolo11n_tensorrt.yaml
+  $ref: inference/detection/yolo/yolo11n_tensorrt.yaml
 ```
 
 OmegaConf composition finishes before the plugin parser runs. The parser must
@@ -239,19 +247,46 @@ Create a separate family folder because preprocessing/decoding differs:
 ```text
 inference/detection/rt_detr/
 ├── __init__.py
+├── config.py
+├── plugin.py
 ├── preprocessing.py
 ├── postprocessing.py
 └── onnx.py
 ```
 
-Then add a distinct backend type and factory branch:
+Export a family descriptor from `rt_detr/plugin.py`:
 
 ```python
-RT_DETR_ONNX = "rt_detr_onnx"
+PLUGIN = DetectionFamilyPlugin(
+    model_family="rt_detr",
+    parse_config=parse_rt_detr_config,
+    create_backend=create_rt_detr_backend,
+)
 ```
 
-Do not put RT-DETR conditionals throughout `yolo/onnx.py`. An adapter file
-should represent one coherent model-family/runtime combination.
+No root enum, config union, registry table, or generic factory branch changes are
+required. `detection/registry.py` discovers
+`detection/<model_family>/plugin.py` by folder convention.
+
+The family owns its backend discriminator locally:
+
+```python
+class RtDetrBackendType(str, Enum):
+    ONNX = "onnx"
+    TENSORRT = "tensorrt"
+```
+
+The corresponding preset uses independent dimensions:
+
+```yaml
+model_family: rt_detr
+backend: onnx
+model_path: models/rt_detr.onnx
+```
+
+Do not invent a combined value such as `backend: rt_detr_onnx`, and do not put
+RT-DETR conditionals throughout `yolo/onnx.py`. An adapter file should represent
+one coherent model-family/backend combination.
 
 ## 7. Adding a new objective
 

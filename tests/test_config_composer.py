@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from vision_stream_lab.configuration import load_config_document
+from vision_stream_lab.configuration import compose_config_document, load_config_document
 
 
 def write_yaml(path: Path, content: str) -> None:
@@ -10,7 +10,7 @@ def write_yaml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_ref_deep_merge_interpolation_and_deployment_override(tmp_path):
+def test_nested_refs_deep_merge_and_interpolation(tmp_path):
     write_yaml(
         tmp_path / "presets" / "detector.yaml",
         """
@@ -31,27 +31,31 @@ tracker:
   enabled: false
 """,
     )
-
-    result = load_config_document(
-        tmp_path / "usecase.yaml",
-        config_root=tmp_path,
-        overrides={
-            "inference": {
-                "confidence": 0.55,
-                "classes": [7],
-                "model_path": "models/override.onnx",
-            }
-        },
+    write_yaml(
+        tmp_path / "deployment.yaml",
+        """
+config:
+  $ref: usecase.yaml
+  inference:
+    confidence: 0.55
+    classes: [7]
+    model_path: models/override.onnx
+""",
     )
 
-    assert result["inference"] == {
+    result = load_config_document(
+        tmp_path / "deployment.yaml",
+        config_root=tmp_path,
+    )
+
+    assert result["config"]["inference"] == {
         "backend": "onnx",
         "model_path": "models/override.onnx",
         "confidence": 0.55,
         "classes": [7],
         "label": "onnx:models/override.onnx",
     }
-    assert result["tracker"] == {"enabled": False}
+    assert result["config"]["tracker"] == {"enabled": False}
 
 
 def test_ref_rejects_cycles_and_paths_outside_config_root(tmp_path):
@@ -63,3 +67,19 @@ def test_ref_rejects_cycles_and_paths_outside_config_root(tmp_path):
     write_yaml(tmp_path / "escape.yaml", "$ref: ../outside.yaml\n")
     with pytest.raises(ValueError, match="escapes config root"):
         load_config_document(tmp_path / "escape.yaml", config_root=tmp_path)
+
+
+def test_composition_tracks_the_winning_source_for_each_leaf(tmp_path):
+    write_yaml(tmp_path / "preset.yaml", "model: base.onnx\nconfidence: 0.2\n")
+    write_yaml(
+        tmp_path / "profile.yaml",
+        "$ref: preset.yaml\nconfidence: 0.7\n",
+    )
+
+    document = compose_config_document(tmp_path / "profile.yaml", config_root=tmp_path)
+
+    assert document.data == {"model": "base.onnx", "confidence": 0.7}
+    assert document.sources == {
+        "model": "preset.yaml",
+        "confidence": "profile.yaml",
+    }

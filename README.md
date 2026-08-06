@@ -185,8 +185,15 @@ src/vision_stream_lab/
 |     |- config.py
 |     |- schema.py
 |     |- factory.py
-|     |- noop.py
+|     |- plugin.py
+|     |- registry.py
+|     |- noop/
+|     |  |- config.py
+|     |  |- plugin.py
+|     |  `- backend.py
 |     `- yolo/
+|        |- config.py
+|        |- plugin.py
 |        |- preprocessing.py
 |        |- postprocessing.py
 |        |- onnx.py
@@ -213,6 +220,7 @@ src/vision_stream_lab/
 |     |- styles.css
 |     `- app.js
 |- configuration/
+|  |- composer.py
 |  `- loader.py
 |- schema/                    # runtime-wide contracts only
 `- enums/                     # runtime-wide enums only
@@ -220,43 +228,40 @@ src/vision_stream_lab/
 
 ## Configuration flow
 
-Configuration retains the split-file style of the source repository and uses
-OmegaConf for deep composition and interpolation. Hydra is intentionally not part
-of the runtime.
+`configs/app.yaml` is the single composition root. Nested `$ref` mappings form
+one OmegaConf tree; interpolation is resolved once before generic and
+plugin-owned typed parsing. Hydra is intentionally not part of the service
+lifecycle.
 
 ```mermaid
 flowchart LR
-    APP[configs/app.yaml] --> LOADER[configuration/loader.py]
-    CAM[configs/cameras.yaml] --> LOADER
-    DEPLOY[configs/use_cases.yaml] --> LOADER
-    PRESET[configs/inference/detection/*.yaml] --> COMPOSE[OmegaConf composer]
-    UC[configs/usecases/object_detection.yaml] --> COMPOSE
-    COMPOSE --> LOADER
-    ALERT[configs/alerts/object_detection.yaml] --> LOADER
-    LOADER --> REGISTRY[usecases/registry.py]
-    REGISTRY --> PLUGIN[ObjectDetectionPlugin]
-    PLUGIN --> PARSER[ObjectDetectionConfig parser]
-    PARSER --> CONFIG[Validated plugin_config]
-    LOADER --> DEPLOYCFG[Generic UseCaseDeploymentConfig]
-    CONFIG --> DEPLOYCFG
-    DEPLOYCFG --> APPCONFIG[Validated AppConfig]
-    APPCONFIG --> RUNTIME[VisionRuntime]
+    APP[app.yaml] -->|$ref| CAM[cameras.yaml]
+    APP -->|$ref| DEPLOY[deployments.yaml]
+    DEPLOY -->|config $ref| PROFILE[use-case profile]
+    PROFILE -->|inference $ref| PRESET[inference objective preset]
+    DEPLOY -->|alert $ref| ALERT[alert policy]
+    APP --> COMPOSE[one OmegaConf tree]
+    COMPOSE --> GENERIC[generic typed schemas]
+    COMPOSE --> PLUGIN[plugin-owned typed config]
+    GENERIC --> CONFIG[AppConfig]
+    PLUGIN --> CONFIG
 ```
 
-The generic loader validates deployment concerns (`id`, `type`, cameras, enabled
-state, and alert side effects). It does not know fields such as `tracker`, model
-count, zones, or business thresholds. The selected plugin receives its raw
-algorithm YAML and returns a typed, validated `plugin_config`. Unknown plugin
-fields fail during startup instead of surfacing later inside a worker process.
+The generic loader knows deployment identity, camera routing, worker settings,
+and alert policy. It never knows fields such as boxes, masks, classes, tracker,
+zones, or business thresholds. The selected use-case plugin parses the resolved
+`config` mapping and may use detection, segmentation, classification,
+recognition, or multiple inference objectives.
 
 ```text
 configs/
 |- app.yaml
 |- cameras.yaml
-|- use_cases.yaml
+|- deployments.yaml
 |- inference/
 |  `- detection/
-|     `- yolo11n_onnx.yaml
+|     `- yolo/
+|        `- yolo11n_onnx.yaml
 |- usecases/
 |  `- object_detection.yaml
 |- alerts/
@@ -272,11 +277,13 @@ only the runtime fields that differ from those app-level defaults.
 
 ```yaml
 runtime:
-  batch_size: 4
-  batch_wait_ms: 12
-  queue_timeout_ms: 250
-  shard_index: 0
-  shard_count: 1
+  worker_defaults:
+    batch_size: 4
+    batch_wait_ms: 12
+    queue_timeout_ms: 250
+  sharding:
+    index: 0
+    count: 1
 
 frame:
   width: 1280
@@ -292,9 +299,11 @@ monitoring:
   alignment_delay_ms: 250
   frame_buffer_size: 16
 
-config_files:
-  cameras: cameras.yaml
-  use_cases: use_cases.yaml
+cameras:
+  $ref: cameras.yaml
+
+deployments:
+  $ref: deployments.yaml
 ```
 
 ### Cameras
@@ -302,14 +311,13 @@ config_files:
 `configs/cameras.yaml` owns individual camera/video settings.
 
 ```yaml
-cameras:
-  - id: camera-01
-    name: Loading bay
-    source: videos/loading-bay.mp4  # file, RTSP URL, or integer webcam ID
-    loop: true
-    max_fps: 15                    # sampling cap; 0 uses the file's native FPS
-    enabled: true
-    shard: 0                       # optional explicit instance assignment
+camera-01:
+  name: Loading bay
+  source: videos/loading-bay.mp4  # file, RTSP URL, or integer webcam ID
+  loop: true
+  max_fps: 15                    # sampling cap; 0 uses the file's native FPS
+  enabled: true
+  shard: 0                       # optional explicit instance assignment
 ```
 
 Every source is resized to the fixed application frame size so shared-memory allocation stays predictable.
@@ -344,21 +352,17 @@ Use `--video-fps 15` to cap every simulated camera at 15 FPS. The default
 
 ### Use-case deployment
 
-`configs/use_cases.yaml` decides which pipeline runs on which cameras.
+`configs/deployments.yaml` decides which plugin profile runs on which cameras.
 
 ```yaml
-use_cases:
-  - id: object-detection
-    type: object_detection
-    enabled: true
-    cameras: ["*"]                # or [camera-01, camera-03]
-    config_path: usecases/object_detection.yaml
-    alert_config_path: alerts/object_detection.yaml
-    runtime:                       # optional; falls back field-by-field to app.yaml runtime
-      batch_size: 4
-    overrides:                     # optional deep override after resolving $ref
-      inference:
-        confidence: 0.35
+object-detection:
+  type: object_detection
+  enabled: true
+  cameras: ["*"]                # or [camera-01, camera-03]
+  config:
+    $ref: usecases/object_detection.yaml
+  alert:
+    $ref: alerts/object_detection.yaml
 ```
 
 One enabled entry creates one physical worker process, one latest-signal queue, one metrics state set, and one output shared-memory store.
@@ -370,16 +374,25 @@ backend/model presets.
 
 ```yaml
 inference:
-  $ref: inference/detection/yolo11n_onnx.yaml
+  $ref: inference/detection/yolo/yolo11n_onnx.yaml
+  confidence: 0.20
+  classes: [0, 1, 2, 3, 5, 7]
 
 tracker:
   enabled: false
 ```
 
-Composition order is `$ref` preset, local use-case fields, deployment
-`overrides`, OmegaConf interpolation, then plugin-owned typed parsing. Mappings
-deep-merge and lists replace. Use `backend: noop` in a preset or local inference
-mapping to test streaming/shared memory/monitoring without loading a model.
+Fields next to `$ref` override the referenced mapping. References resolve
+recursively, mappings deep-merge, lists replace, then OmegaConf interpolation
+and plugin-owned typed parsing run. Use `model_family: noop` together with
+`backend: noop` in a preset or local inference mapping to test the runtime
+without loading a model.
+
+Inspect the exact resolved tree and winning source file for every leaf:
+
+```powershell
+python scripts\resolve_config.py --config configs\app.yaml --sources
+```
 
 See [Configuration architecture](docs/CONFIGURATION.md) for reference rules,
 typed backend configs, per-deployment model overrides, and runtime precedence.
@@ -398,6 +411,14 @@ cooldown_seconds: 30
 When enabled, a separate process reads the latest annotated shared frame and saves snapshots. Future video encoding should remain in `alerting`, never in the inference worker.
 
 ## Inference backends
+
+Inference presets keep the objective in the directory and declare model family
+and execution backend independently. For example, detection uses
+`model_family: yolo` with `backend: onnx`; a future RT-DETR adapter can use
+`model_family: rt_detr` with the same `backend: onnx` without inventing a
+combined backend name. Detection families are discovered from
+`inference/detection/<model_family>/plugin.py`; each family owns its backend
+config union and factory.
 
 ### ONNX Runtime (default)
 
@@ -425,7 +446,7 @@ package with the CUDA-compatible `onnxruntime-gpu` build and select
 ### Local YOLO
 
 `inference/detection/yolo/ultralytics.py` remains as a comparison/debug backend. Install
-`.[export]`, set `backend: local_yolo`, and change `model_path` back to the `.pt`
+`.[export]`, set `backend: ultralytics`, and change `model_path` back to the `.pt`
 checkpoint before using it.
 
 ### Triton
@@ -569,7 +590,9 @@ Dashboard metrics:
 
 ## Multi-instance and GPU sharding
 
-Set `runtime.shard_index` and `runtime.shard_count` in separate config files. Explicit camera `shard` values take precedence; otherwise a stable camera-ID checksum assigns the camera.
+Set `runtime.sharding.index` and `runtime.sharding.count` in each instance's app
+config. Explicit camera `shard` values take precedence; otherwise a stable
+camera-ID checksum assigns the camera.
 
 For multiple GPUs, run one service instance per shard and set the object-detection `device` to `0`, `1`, etc. Deployment/container setup remains outside phase 1.
 

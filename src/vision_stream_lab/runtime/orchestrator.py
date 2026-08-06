@@ -40,7 +40,7 @@ class UseCaseOrchestrator:
         all_camera_ids = [camera.id for camera in config.cameras]
         self.runtimes: dict[str, UseCaseRuntime] = {}
 
-        for use_case in config.use_cases:
+        for use_case in config.deployments:
             camera_ids = tuple(
                 camera_id
                 for camera_id in all_camera_ids

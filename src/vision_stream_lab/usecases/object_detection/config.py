@@ -6,9 +6,9 @@ from typing import Any
 
 from ...inference.detection import (
     DetectionBackendConfig,
-    UltralyticsYoloConfig,
     parse_detection_backend_config,
 )
+from ...inference.detection.yolo.config import UltralyticsYoloConfig
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,12 @@ def parse_object_detection_config(raw: Mapping[str, Any]) -> ObjectDetectionConf
             f"Unknown object_detection config fields: {sorted(unknown)}"
         )
 
-    inference = parse_detection_backend_config(dict(raw.get("inference", {})))
+    inference_raw = raw.get("inference")
+    inference = (
+        UltralyticsYoloConfig()
+        if inference_raw is None
+        else parse_detection_backend_config(dict(inference_raw))
+    )
     tracker = TrackerConfig(**dict(raw.get("tracker", {})))
 
     if not 0 <= tracker.iou_threshold <= 1:

@@ -1,5 +1,9 @@
 inference:
-  $ref: inference/detection/yolo11n_onnx.yaml
+  $ref: inference/detection/yolo/yolo11n_pt.yaml
+  # Road-camera profile overrides the reusable COCO model preset.
+  confidence: 0.2
+  # person, bicycle, car, motorcycle, bus, truck (COCO class IDs)
+  classes: [0, 1, 2, 3, 5, 7]
 
 tracker:
   enabled: false

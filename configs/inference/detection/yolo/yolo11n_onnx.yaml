@@ -1,3 +1,4 @@
+model_family: yolo
 backend: onnx
 model_path: models/yolo11n.onnx
 device: auto

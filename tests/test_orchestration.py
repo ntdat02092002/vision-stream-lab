@@ -18,7 +18,7 @@ def test_main_process_routes_only_to_assigned_use_cases():
     config = AppConfig(
         runtime=AppRuntimeConfig(),
         frame=FrameConfig(width=16, height=12),
-        use_cases=(
+        deployments=(
             UseCaseDeploymentConfig(
                 id="objects",
                 type="object_detection",

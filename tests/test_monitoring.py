@@ -17,6 +17,7 @@ from vision_stream_lab.schema.config import (
     FrameConfig,
     MonitoringConfig,
     UseCaseDeploymentConfig,
+    UseCaseRuntimeConfig,
 )
 
 
@@ -25,9 +26,11 @@ def build_monitoring_fixture():
     camera_id = "camera-01"
     use_case_id = "object-detection"
     config = AppConfig(
-        runtime=AppRuntimeConfig(batch_size=4),
+        runtime=AppRuntimeConfig(
+            worker_defaults=UseCaseRuntimeConfig(batch_size=4)
+        ),
         frame=FrameConfig(width=16, height=12),
-        use_cases=(
+        deployments=(
             UseCaseDeploymentConfig(
                 id=use_case_id,
                 type="object_detection",
@@ -86,7 +89,7 @@ def test_camera_wall_assets_status_and_snapshot_endpoints():
         assert status["cameras"][0]["id"] == "camera-01"
         assert status["use_cases"][0]["runtime"]["batch_size"] == {
             "value": 4,
-            "source": "app.runtime.batch_size",
+            "source": "runtime.worker_defaults.batch_size",
         }
         assert "batch_size" not in status
 

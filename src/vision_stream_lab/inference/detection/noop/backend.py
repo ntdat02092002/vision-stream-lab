@@ -2,8 +2,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from .base import DetectionBackend
-from .schema import DetectionPrediction
+from ..base import DetectionBackend
+from ..schema import DetectionPrediction
 
 
 class NoopDetectionBackend(DetectionBackend):

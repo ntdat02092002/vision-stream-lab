@@ -1,0 +1,12 @@
+object-detection:
+  type: object_detection
+  enabled: true
+  cameras: ["*"]
+
+  # Generic composition resolves this tree before the object_detection plugin
+  # parses and validates its own schema.
+  config:
+    $ref: usecases/object_detection.yaml
+
+  alert:
+    $ref: alerts/object_detection.yaml

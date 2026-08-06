@@ -388,43 +388,39 @@ cooldown_seconds: 30
 Add a deployment:
 
 ```yaml
-# configs/use_cases.yaml
-use_cases:
-  - id: frame-score-main
-    type: frame_score
-    enabled: true
-    cameras: [camera-01, camera-03]
-    config_path: usecases/frame_score.yaml
-    alert_config_path: alerts/frame_score.yaml
-    runtime:
-      batch_size: 4
-      batch_wait_ms: 12
-      queue_timeout_ms: 250
-    overrides:
-      alert_threshold: 200
+# configs/deployments.yaml
+frame-score-main:
+  type: frame_score
+  enabled: true
+  cameras: [camera-01, camera-03]
+  config:
+    $ref: usecases/frame_score.yaml
+    alert_threshold: 200
+  alert:
+    $ref: alerts/frame_score.yaml
 ```
 
 Meanings:
 
 | Field | Meaning |
 |---|---|
-| `id` | Unique deployment ID; used in process names, API, and dashboard |
+| Mapping key | Unique deployment ID; used in process names, API, and dashboard |
 | `type` | Plugin folder name and `PLUGIN.type` |
 | `enabled` | Whether this deployment starts |
 | `cameras` | Explicit camera IDs or `["*"]` |
-| `config_path` | Plugin-owned YAML parsed by `parse_config` |
-| `alert_config_path` | Generic alert/snapshot policy |
-| `runtime` | Optional worker runtime override; each omitted field inherits from `app.yaml.runtime` |
-| `overrides` | Optional deep override applied to the composed plugin config |
+| `config` | Composed plugin-owned mapping parsed by `parse_config` |
+| `alert` | Generic alert/snapshot policy, inline or composed with `$ref` |
+| `runtime` | Optional worker override; omitted fields inherit `app.runtime.worker_defaults` |
 
 Multiple deployments may use the same plugin type with different models,
 thresholds, or camera assignments. Each deployment currently owns one process
 and one pipeline/model instance.
 
-Plugin YAML may reuse presets through `$ref`. Resolution order is preset, local
-fields, deployment `overrides`, OmegaConf interpolation, then `parse_config`.
-Keep parsing inside the plugin so generic runtime code never learns its fields.
-See [Configuration architecture](CONFIGURATION.md) for the exact merge rules.
+Plugin YAML may reuse inference presets through `$ref`. A deployment may also
+put local fields next to its `config.$ref`; those fields deep-merge over the
+profile before OmegaConf interpolation and `parse_config`. Keep parsing inside
+the plugin so generic runtime code never learns its fields. See
+[Configuration architecture](CONFIGURATION.md) for the exact merge rules.
 
 ## 8. Optional detector subsystem
 
@@ -436,8 +432,9 @@ runtime core and not a mandatory plugin dependency. A use case may:
 - implement a different model backend;
 - perform no deep-learning inference at all.
 
-Detector-specific types live in `inference/detection/config.py` and
-`inference/detection/schema.py`, not in generic `schema/`. See
+The normalized detection contract lives in `inference/detection/schema.py`,
+while family-specific configs live under folders such as
+`inference/detection/yolo/config.py`; neither belongs in generic `schema/`. See
 [Adding an inference backend or objective](ADDING_INFERENCE_BACKEND.md) before
 adding a new runtime adapter or model objective.
 

@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 
 from ..base import DetectionBackend
-from ..config import OnnxYoloConfig
 from ..schema import DetectionPrediction
+from .config import OnnxYoloConfig
 from .postprocessing import postprocess_yolo_output
 from .preprocessing import preprocess_images
 

@@ -6,9 +6,11 @@ import numpy as np
 import pytest
 
 from vision_stream_lab.inference.detection import (
-    DetectionBackendType,
-    NoopDetectionConfig,
+    get_detection_family,
+    parse_detection_backend_config,
+    registered_detection_families,
 )
+from vision_stream_lab.inference.detection.noop.config import NoopDetectionConfig
 from vision_stream_lab.schema.config import UseCaseDeploymentConfig
 from vision_stream_lab.schema.use_case import FrameContext, UseCaseResult
 from vision_stream_lab.usecases import (
@@ -34,6 +36,11 @@ def test_object_detection_is_registered():
     assert get_plugin("object_detection").type == "object_detection"
 
 
+def test_detection_model_families_are_discovered_as_plugins():
+    assert registered_detection_families() == ("noop", "yolo")
+    assert get_detection_family("yolo").model_family == "yolo"
+
+
 def test_registry_rejects_invalid_or_missing_plugin_types():
     with pytest.raises(ValueError, match="lowercase snake_case"):
         get_plugin("Bad-Plugin")
@@ -44,7 +51,7 @@ def test_registry_rejects_invalid_or_missing_plugin_types():
 def test_plugin_owns_typed_config_and_deployment_stays_generic():
     plugin_config = parse_plugin_config(
         "object_detection",
-        {"inference": {"backend": "noop"}},
+        {"inference": {"model_family": "noop", "backend": "noop"}},
     )
     deployment = UseCaseDeploymentConfig(
         id="objects",
@@ -53,7 +60,8 @@ def test_plugin_owns_typed_config_and_deployment_stays_generic():
     )
 
     assert isinstance(plugin_config, ObjectDetectionConfig)
-    assert plugin_config.inference.backend is DetectionBackendType.NOOP
+    assert plugin_config.inference.backend == "noop"
+    assert plugin_config.inference.model_family == "noop"
     assert plugin_config.tracker.enabled is False
     assert not hasattr(deployment, "inference")
     assert not hasattr(deployment, "tracker")
@@ -63,6 +71,13 @@ def test_plugin_owns_typed_config_and_deployment_stays_generic():
 def test_plugin_rejects_unknown_config_fields():
     with pytest.raises(ValueError, match="Unknown object_detection config fields"):
         parse_plugin_config("object_detection", {"typo_tracker": {}})
+
+
+def test_unknown_detection_family_has_actionable_plugin_error():
+    with pytest.raises(ValueError, match="Unknown detection model_family 'rt_detr'"):
+        parse_detection_backend_config(
+            {"model_family": "rt_detr", "backend": "onnx"}
+        )
 
 
 def test_object_detection_pipeline_contract_with_noop_backend():

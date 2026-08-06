@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 
 from ..base import DetectionBackend
-from ..config import TritonYoloConfig
 from ..schema import DetectionPrediction
+from .config import TritonYoloConfig
 
 
 class TritonYoloBackend(DetectionBackend):

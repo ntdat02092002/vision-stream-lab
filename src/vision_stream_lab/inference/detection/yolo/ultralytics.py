@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 
 from ..base import DetectionBackend
-from ..config import UltralyticsYoloConfig
 from ..schema import DetectionPrediction
+from .config import UltralyticsYoloConfig
 
 
 class UltralyticsYoloBackend(DetectionBackend):

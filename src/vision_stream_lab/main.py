@@ -64,7 +64,7 @@ def run(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(processName)s %(name)s: %(message)s",
     )
-    for use_case in config.use_cases:
+    for use_case in config.deployments:
         resolved_runtime = ", ".join(
             f"{field_name}={getattr(use_case.runtime, field_name)} "
             f"({use_case.runtime_source(field_name)})"

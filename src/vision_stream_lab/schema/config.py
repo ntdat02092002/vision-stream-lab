@@ -19,17 +19,6 @@ class FrameConfig:
 
 
 @dataclass(frozen=True)
-class AppRuntimeConfig:
-    """Application runtime defaults plus instance-level camera sharding."""
-
-    batch_size: int = 4
-    batch_wait_ms: int = 12
-    queue_timeout_ms: int = 250
-    shard_index: int = 0
-    shard_count: int = 1
-
-
-@dataclass(frozen=True)
 class UseCaseRuntimeConfig:
     """Resolved worker runtime for one use-case deployment."""
 
@@ -40,6 +29,22 @@ class UseCaseRuntimeConfig:
     @classmethod
     def field_names(cls) -> tuple[str, ...]:
         return tuple(item.name for item in fields(cls))
+
+
+@dataclass(frozen=True)
+class ShardingConfig:
+    index: int = 0
+    count: int = 1
+
+
+@dataclass(frozen=True)
+class AppRuntimeConfig:
+    """Application runtime policy, split by worker and instance scope."""
+
+    worker_defaults: UseCaseRuntimeConfig = field(
+        default_factory=UseCaseRuntimeConfig
+    )
+    sharding: ShardingConfig = field(default_factory=ShardingConfig)
 
 
 @dataclass(frozen=True)
@@ -81,15 +86,15 @@ class UseCaseDeploymentConfig:
         if field_name not in UseCaseRuntimeConfig.field_names():
             raise ValueError(f"Unknown use-case runtime field: {field_name}")
         if field_name in self.runtime_override_fields:
-            return f"deployment[{self.id}].runtime.{field_name}"
-        return f"app.runtime.{field_name}"
+            return f"deployments.{self.id}.runtime.{field_name}"
+        return f"runtime.worker_defaults.{field_name}"
 
 
 @dataclass(frozen=True)
 class AppConfig:
     runtime: AppRuntimeConfig
     frame: FrameConfig
-    use_cases: tuple[UseCaseDeploymentConfig, ...]
+    deployments: tuple[UseCaseDeploymentConfig, ...]
     monitoring: MonitoringConfig
     cameras: tuple[CameraDefinition, ...]
     project_root: Path

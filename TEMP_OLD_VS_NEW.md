@@ -70,7 +70,7 @@ Repo mới vẫn dùng cấu hình thay vì hard-code việc camera nào chạy 
 ```text
 configs/app.yaml
 configs/cameras.yaml
-configs/use_cases.yaml
+configs/deployments.yaml
 configs/usecases/object_detection.yaml
 configs/alerts/object_detection.yaml
 ```

@@ -175,9 +175,9 @@ Vòng đầu chỉ cần hiểu trách nhiệm và các điểm nối. Chưa c�
 
 1. [`configs/app.yaml`](configs/app.yaml)
 2. [`configs/cameras.yaml`](configs/cameras.yaml)
-3. [`configs/use_cases.yaml`](configs/use_cases.yaml)
+3. [`configs/deployments.yaml`](configs/deployments.yaml)
 4. [`configs/usecases/object_detection.yaml`](configs/usecases/object_detection.yaml)
-5. [`configs/inference/detection/yolo11n_onnx.yaml`](configs/inference/detection/yolo11n_onnx.yaml)
+5. [`configs/inference/detection/yolo/yolo11n_onnx.yaml`](configs/inference/detection/yolo/yolo11n_onnx.yaml)
 6. [`configs/alerts/object_detection.yaml`](configs/alerts/object_detection.yaml)
 
 Cần trả lời được:
@@ -195,17 +195,17 @@ Ba tầng config khác nhau:
 ```text
 app.yaml
 ├── runtime/frame/monitoring       cấu hình dùng chung toàn app
-└── config_files
-    ├── cameras.yaml               khai báo nguồn camera
-    └── use_cases.yaml             deployment + camera assignment
-        ├── usecases/*.yaml        config riêng do plugin tự parse
-        └── alerts/*.yaml          config alert của deployment
+├── cameras: $ref cameras.yaml
+└── deployments: $ref deployments.yaml
+    ├── config: $ref usecases/*.yaml
+    │   └── inference: $ref inference/<objective>/*.yaml
+    └── alert: $ref alerts/*.yaml
 ```
 
 Use-case config có thể dùng `$ref` để tái sử dụng inference preset. Thứ tự thực
-tế là preset → field local → `overrides` của deployment → resolve `${...}` →
-plugin parse thành typed config. `runtime.*` là scheduling mặc định; mỗi entry
-trong `use_cases.yaml` có thể override bằng `scheduling` riêng.
+tế là resolve `$ref` đệ quy → deep-merge field local → resolve `${...}` → plugin
+parse thành typed config. Worker mặc định nằm ở `app.runtime.worker_defaults`;
+mỗi entry trong `deployments.yaml` chỉ khai báo `runtime` khi thật sự cần override.
 
 ### Bước 2 — Đọc schema để biết “hình dạng dữ liệu”
 
@@ -217,8 +217,9 @@ trong `use_cases.yaml` có thể override bằng `scheduling` riêng.
 4. [`src/vision_stream_lab/schema/frame.py`](src/vision_stream_lab/schema/frame.py)
 
 Detector config/contracts không thuộc generic schema. Khi cần đọc YOLO backend,
-đọc thêm [`inference/detection/config.py`](src/vision_stream_lab/inference/detection/config.py)
-và [`inference/detection/schema.py`](src/vision_stream_lab/inference/detection/schema.py).
+đọc thêm [`inference/detection/schema.py`](src/vision_stream_lab/inference/detection/schema.py),
+[`inference/detection/registry.py`](src/vision_stream_lab/inference/detection/registry.py)
+và [`inference/detection/yolo/config.py`](src/vision_stream_lab/inference/detection/yolo/config.py).
 
 Các type quan trọng:
 
@@ -246,13 +247,14 @@ Theo dấu `load_config()`:
 
 ```mermaid
 flowchart TD
-    A["load_config(app.yaml)"] --> B["parse AppRuntimeConfig / FrameConfig / MonitoringConfig"]
-    B --> C["_load_cameras(cameras.yaml)"]
+    A["load_config(app.yaml)"] --> R["resolve all nested $ref into one OmegaConf tree"]
+    R --> O["resolve interpolation + retain leaf source files"]
+    O --> B["parse structured app/runtime/frame/monitoring schemas"]
+    B --> C["_load_cameras(composed cameras mapping)"]
     C --> D["resolve source paths + filter enabled + shard"]
-    B --> E["_load_use_cases(use_cases.yaml)"]
+    B --> E["_load_deployments(deployments mapping)"]
     E --> F["validate camera assignment"]
-    F --> G["compose $ref + local + deployment overrides"]
-    G --> H["resolve interpolation + registry.parse_plugin_config(type, raw)"]
+    F --> H["registry.parse_plugin_config(type, composed config subtree)"]
     H --> I["plugin-specific typed config"]
     D --> J["AppConfig"]
     I --> J
@@ -459,10 +461,11 @@ Một chi tiết quan trọng: `output_frame` được vẽ bằng detector boxe
 
 1. [`src/vision_stream_lab/inference/core/base.py`](src/vision_stream_lab/inference/core/base.py)
 2. [`src/vision_stream_lab/inference/detection/base.py`](src/vision_stream_lab/inference/detection/base.py)
-3. [`src/vision_stream_lab/inference/detection/factory.py`](src/vision_stream_lab/inference/detection/factory.py)
-4. Backend đang dùng: [`inference/detection/yolo/onnx.py`](src/vision_stream_lab/inference/detection/yolo/onnx.py)
-5. Pre/postprocess: [`preprocessing.py`](src/vision_stream_lab/inference/detection/yolo/preprocessing.py) và [`postprocessing.py`](src/vision_stream_lab/inference/detection/yolo/postprocessing.py)
-6. Khi cần mới đọc adapter [`ultralytics.py`](src/vision_stream_lab/inference/detection/yolo/ultralytics.py) hoặc [`triton.py`](src/vision_stream_lab/inference/detection/yolo/triton.py)
+3. [`src/vision_stream_lab/inference/detection/registry.py`](src/vision_stream_lab/inference/detection/registry.py)
+4. [`src/vision_stream_lab/inference/detection/yolo/plugin.py`](src/vision_stream_lab/inference/detection/yolo/plugin.py)
+5. Backend đang dùng: [`inference/detection/yolo/onnx.py`](src/vision_stream_lab/inference/detection/yolo/onnx.py)
+6. Pre/postprocess: [`preprocessing.py`](src/vision_stream_lab/inference/detection/yolo/preprocessing.py) và [`postprocessing.py`](src/vision_stream_lab/inference/detection/yolo/postprocessing.py)
+7. Khi cần mới đọc adapter [`ultralytics.py`](src/vision_stream_lab/inference/detection/yolo/ultralytics.py) hoặc [`triton.py`](src/vision_stream_lab/inference/detection/yolo/triton.py)
 
 Contract backend rất nhỏ:
 
@@ -718,18 +721,20 @@ configs/usecases/intrusion_detection.yaml
 configs/alerts/intrusion_detection.yaml
 ```
 
-Sau đó thêm entry vào `configs/use_cases.yaml`:
+Sau đó thêm entry vào `configs/deployments.yaml`:
 
 ```yaml
-- id: intrusion-main
+intrusion-main:
   type: intrusion_detection
   enabled: true
   cameras: [camera-01, camera-03]
-  config_path: usecases/intrusion_detection.yaml
-  alert_config_path: alerts/intrusion_detection.yaml
+  config:
+    $ref: usecases/intrusion_detection.yaml
+  alert:
+    $ref: alerts/intrusion_detection.yaml
 ```
 
-`id` là deployment ID; `type` là plugin type. Có thể có nhiều deployment cùng type nhưng dùng config/camera assignment khác nhau. Mỗi deployment hiện tạo một process riêng và load model riêng.
+Mapping key là deployment ID; `type` là plugin type. Có thể có nhiều deployment cùng type nhưng dùng config/camera assignment khác nhau. Mỗi deployment hiện tạo một process riêng và load model riêng.
 
 ### 8.7. Thêm test theo lớp
 
@@ -803,7 +808,7 @@ schema/use_case.py
 → usecases/registry.py
 → usecases/object_detection/{config,plugin,pipeline,rendering}.py
 → runtime/use_case_worker.py
-→ configs/use_cases.yaml
+→ configs/deployments.yaml
 → tests/test_use_cases.py
 ```
 

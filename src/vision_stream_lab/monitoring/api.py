@@ -77,8 +77,8 @@ def create_app(
     frontend_dir = Path(__file__).with_name("frontend")
     app.mount("/assets", StaticFiles(directory=frontend_dir), name="assets")
     camera_names = {camera.id: camera.name for camera in config.cameras}
-    use_case_types = {use_case.id: use_case.type for use_case in config.use_cases}
-    use_cases_by_id = {use_case.id: use_case for use_case in config.use_cases}
+    use_case_types = {use_case.id: use_case.type for use_case in config.deployments}
+    use_cases_by_id = {use_case.id: use_case for use_case in config.deployments}
     primary_use_case = next(iter(output_stores))
 
     @app.get("/", response_class=FileResponse)
@@ -107,7 +107,9 @@ def create_app(
                 }
                 for use_case_id in output_stores
             ],
-            "shard": f"{config.runtime.shard_index}/{config.runtime.shard_count}",
+            "shard": (
+                f"{config.runtime.sharding.index}/{config.runtime.sharding.count}"
+            ),
             "stream": {
                 "transport": "mjpeg",
                 "fps": config.monitoring.stream_fps,
