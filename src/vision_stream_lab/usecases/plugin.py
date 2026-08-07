@@ -14,9 +14,8 @@ PluginConfigParser = Callable[[Mapping[str, Any]], Any]
 PipelineFactory = Callable[[Any, Path], UseCasePipeline]
 SharedStateFactory = Callable[[Any, Any], Any]
 ResultPublisher = Callable[[Any, UseCaseResult, FrameContext, Any], None]
-LatestResultRenderer = Callable[
-    [np.ndarray, Any, float, float, float, Any], np.ndarray
-]
+LatestResultRenderer = Callable[[np.ndarray, Any, float, float, float, Any], np.ndarray]
+StaticOverlayRenderer = Callable[[np.ndarray, str, Any, Any], np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -29,3 +28,4 @@ class UseCasePlugin:
     create_shared_state: SharedStateFactory
     publish_result: ResultPublisher
     render_latest: LatestResultRenderer
+    render_static_overlay: StaticOverlayRenderer | None = None

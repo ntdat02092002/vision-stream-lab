@@ -1,4 +1,4 @@
-object-detection:
+object-detection-demo:
   type: object_detection
   enabled: true
   cameras: ["*"]
@@ -6,7 +6,7 @@ object-detection:
   # Generic composition resolves this tree before the object_detection plugin
   # parses and validates its own schema.
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/profiles/road-traffic.yaml
 
   alert:
     $ref: alerts/object_detection.yaml

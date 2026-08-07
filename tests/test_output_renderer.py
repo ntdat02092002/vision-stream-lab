@@ -11,7 +11,10 @@ from vision_stream_lab.runtime.shared_frames import (
 )
 from vision_stream_lab.schema.config import MonitoringConfig, UseCaseDeploymentConfig
 from vision_stream_lab.usecases import create_shared_state
-from vision_stream_lab.usecases.object_detection.config import ObjectDetectionConfig
+from vision_stream_lab.usecases.object_detection.config import (
+    ObjectDetectionConfig,
+    parse_object_detection_config,
+)
 from vision_stream_lab.usecases.object_detection.state import write_snapshot
 
 
@@ -19,6 +22,7 @@ def create_renderer(
     render_mode=OutputRenderMode.LATEST_PREDICTIONS,
     ttl_ms=500,
     alignment_delay_ms=250,
+    plugin_config=None,
 ):
     context = mp.get_context("spawn")
     camera_id = "camera-01"
@@ -29,7 +33,7 @@ def create_renderer(
     use_case = UseCaseDeploymentConfig(
         id="object-detection",
         type="object_detection",
-        plugin_config=ObjectDetectionConfig(),
+        plugin_config=plugin_config or ObjectDetectionConfig(),
         cameras=(camera_id,),
     )
     states = create_use_case_states(
@@ -160,13 +164,53 @@ def test_delayed_matched_waits_until_frame_reaches_alignment_delay():
         alignment_delay_ms=200,
     )
     try:
-        raw_store.slots["camera-01"].write(
-            np.full((80, 120, 3), 20, np.uint8), time.time()
-        )
+        raw_store.slots["camera-01"].write(np.full((80, 120, 3), 20, np.uint8), time.time())
         renderer.buffer_raw_frame("camera-01")
         renderer.render_once()
 
         _, output_sequence, _ = output_store.slots["camera-01"].read()
         assert output_sequence == 0
+    finally:
+        close_stores(output_store, inference_store, raw_store)
+
+
+def test_delayed_matched_draws_static_overlay_on_raw_fallback():
+    plugin_config = parse_object_detection_config(
+        {
+            "spatial": {
+                "zones": {
+                    "enabled": True,
+                    "cameras": {
+                        "camera-01": [
+                            {
+                                "id": "main-zone",
+                                "points": [
+                                    [0.1, 0.1],
+                                    [0.9, 0.1],
+                                    [0.9, 0.9],
+                                    [0.1, 0.9],
+                                ],
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    )
+    renderer, _, raw_store, inference_store, output_store = create_renderer(
+        render_mode=OutputRenderMode.DELAYED_MATCHED,
+        alignment_delay_ms=200,
+        plugin_config=plugin_config,
+    )
+    try:
+        raw = np.full((80, 120, 3), 40, np.uint8)
+        raw_store.slots["camera-01"].write(raw, time.time() - 0.3)
+        renderer.buffer_raw_frame("camera-01")
+
+        renderer.render_once()
+        output, _, _ = output_store.slots["camera-01"].read()
+
+        assert np.any(output != raw)
+        assert np.array_equal(raw, np.full((80, 120, 3), 40, np.uint8))
     finally:
         close_stores(output_store, inference_store, raw_store)

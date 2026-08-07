@@ -263,10 +263,12 @@ configs/
 |     `- yolo/
 |        `- yolo11n_onnx.yaml
 |- usecases/
-|  `- object_detection.yaml
-|- alerts/
-|  `- object_detection.yaml
-`- zones/
+|  `- object_detection/
+|     |- default.yaml
+|     `- profiles/
+|        `- road-traffic.yaml
+`- alerts/
+   `- object_detection.yaml
 ```
 
 ### Application settings
@@ -360,7 +362,7 @@ object-detection:
   enabled: true
   cameras: ["*"]                # or [camera-01, camera-03]
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/profiles/road-traffic.yaml
   alert:
     $ref: alerts/object_detection.yaml
 ```
@@ -369,17 +371,28 @@ One enabled entry creates one physical worker process, one latest-signal queue, 
 
 ### Object-detection model
 
-`configs/usecases/object_detection.yaml` composes plugin parameters from reusable
-backend/model presets.
+`configs/usecases/object_detection/default.yaml` is the camera-independent
+plugin baseline. Complete deployment profiles under
+`configs/usecases/object_detection/profiles/` reference that baseline and add
+site or workload-specific overrides.
 
 ```yaml
+# configs/usecases/object_detection/profiles/road-traffic.yaml
+$ref: usecases/object_detection/default.yaml
+
 inference:
-  $ref: inference/detection/yolo/yolo11n_onnx.yaml
   confidence: 0.20
   classes: [0, 1, 2, 3, 5, 7]
 
-tracker:
-  enabled: false
+spatial:
+  coordinate_space: normalized
+  zones:
+    enabled: true
+    anchor: bottom_center
+    cameras:
+      camera-01:
+        - id: loading-area
+          points: [[0.10, 0.20], [0.90, 0.20], [0.90, 0.95], [0.10, 0.95]]
 ```
 
 Fields next to `$ref` override the referenced mapping. References resolve
@@ -387,6 +400,13 @@ recursively, mappings deep-merge, lists replace, then OmegaConf interpolation
 and plugin-owned typed parsing run. Use `model_family: noop` together with
 `backend: noop` in a preset or local inference mapping to test the runtime
 without loading a model.
+
+The optional, plugin-owned `spatial` section currently defines per-camera
+polygon zones. Once enabled, detections and event counts are kept only when the
+configured bbox anchor lies inside a zone. It does not crop the model input.
+The namespace is reserved for future `tripwires` (line-crossing events) and
+`inference_rois` (pre-model crop/tile regions). See
+[Object-detection spatial configuration](docs/CONFIGURATION.md#object-detection-spatial-configuration).
 
 Inspect the exact resolved tree and winning source file for every leaf:
 
@@ -503,7 +523,8 @@ src/vision_stream_lab/usecases/<type>/
 ```
 
 The folder name, YAML `type`, and `PLUGIN.type` must be the same lowercase
-snake-case value. `plugin.py` exports a `UseCasePlugin` with five hooks:
+snake-case value. `plugin.py` exports a `UseCasePlugin` with five required hooks
+and one optional static-overlay hook:
 
 ```python
 UseCasePlugin(
@@ -513,6 +534,7 @@ UseCasePlugin(
     create_shared_state=...,
     publish_result=...,
     render_latest=...,
+    render_static_overlay=...,  # optional
 )
 ```
 
@@ -565,7 +587,9 @@ latest_predictions + tracker on  -> project boxes with Kalman velocity
 `delayed_matched` and `inference_only` always draw the detector's measured boxes
 on the exact model input and do not use tracker output.
 
-Tracker settings live in `configs/usecases/object_detection.yaml`:
+Baseline tracker settings live in
+`configs/usecases/object_detection/default.yaml`; a profile or deployment may
+override them:
 
 ```yaml
 tracker:

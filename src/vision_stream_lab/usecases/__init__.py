@@ -7,6 +7,7 @@ from .registry import (
     publish_result,
     registered_use_cases,
     render_latest,
+    render_static_overlay,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "publish_result",
     "registered_use_cases",
     "render_latest",
+    "render_static_overlay",
 ]

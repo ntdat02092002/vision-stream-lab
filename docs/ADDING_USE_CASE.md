@@ -99,7 +99,7 @@ Pipeline invariants:
 
 ## 4. `UseCasePlugin` hook contract
 
-The descriptor has five required hooks:
+The descriptor has five required hooks and one optional static-overlay hook:
 
 ```python
 @dataclass(frozen=True)
@@ -112,6 +112,9 @@ class UseCasePlugin:
     render_latest: Callable[
         [np.ndarray, Any, float, float, float, Any], np.ndarray
     ]
+    render_static_overlay: Callable[
+        [np.ndarray, str, Any, Any], np.ndarray
+    ] | None = None
 ```
 
 ### `parse_config(raw) -> plugin_config`
@@ -195,6 +198,14 @@ exists, return the raw image.
 
 `inference_only` and `delayed_matched` do not call this hook; they use the exact
 annotated `output_frame` produced by the pipeline.
+
+### `render_static_overlay(image, camera_id, shared_state, config)` (optional)
+
+Runs only when `inference_only` or `delayed_matched` must display a raw fallback
+frame because no exact inferred frame is available. It is intended for static
+plugin-owned geometry such as zones or lines. The runtime does not call it for
+an exact inferred frame, so overlays already drawn by the pipeline are not
+duplicated. Plugins without static geometry should leave this hook unset.
 
 ## 5. Minimal stateless hooks
 
@@ -371,7 +382,7 @@ Adjust relative imports if the implementation is copied verbatim. The existing
 Create plugin config:
 
 ```yaml
-# configs/usecases/frame_score.yaml
+# configs/usecases/frame_score/default.yaml
 alert_threshold: 180
 ```
 
@@ -394,7 +405,7 @@ frame-score-main:
   enabled: true
   cameras: [camera-01, camera-03]
   config:
-    $ref: usecases/frame_score.yaml
+    $ref: usecases/frame_score/default.yaml
     alert_threshold: 200
   alert:
     $ref: alerts/frame_score.yaml

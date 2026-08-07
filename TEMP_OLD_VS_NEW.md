@@ -71,7 +71,8 @@ Repo mới vẫn dùng cấu hình thay vì hard-code việc camera nào chạy 
 configs/app.yaml
 configs/cameras.yaml
 configs/deployments.yaml
-configs/usecases/object_detection.yaml
+configs/usecases/object_detection/default.yaml
+configs/usecases/object_detection/profiles/road-traffic.yaml
 configs/alerts/object_detection.yaml
 ```
 
@@ -336,9 +337,9 @@ Chưa mang sang:
 
 Khi cần tracking, nên thêm một component có state theo camera vào pipeline thay vì copy toàn bộ tracker cũ ngay từ đầu.
 
-### 6.3. Zone và production alert policy
+### 6.3. Spatial rules và production alert policy
 
-Các JSON/TXT zone, zoom area, Sirren config và alerter theo từng use case chưa được copy. Repo mới chỉ chừa `configs/zones/` để có vị trí mở rộng sau.
+Các JSON/TXT spatial rule cũ, Sirren config và alerter theo từng use case chưa được copy. Repo mới giữ `spatial` bên trong config opaque của từng use case: `zones` là lọc sau inference; `tripwires` line crossing và `inference_rois` crop trước inference là các phần mở rộng riêng.
 
 ### 6.4. Deployment và integration production
 

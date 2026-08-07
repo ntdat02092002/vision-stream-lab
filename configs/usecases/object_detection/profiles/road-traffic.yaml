@@ -1,0 +1,36 @@
+# Complete object-detection profile for the repository's road demo cameras.
+# A deployment may still override any field next to its own config.$ref.
+$ref: usecases/object_detection/default.yaml
+
+inference:
+  confidence: 0.2
+  # person, bicycle, car, motorcycle, bus, truck (COCO class IDs)
+  classes: [0, 1, 2, 3, 5, 7]
+
+spatial:
+  # Post-inference polygon membership. A camera without zones keeps full-frame
+  # detections. This section does not crop the model input.
+  zones:
+    enabled: true
+    cameras:
+      camera-01:
+        - id: main-zone
+          points:
+            - [0.05, 0.10]
+            - [0.95, 0.10]
+            - [0.95, 0.95]
+            - [0.05, 0.95]
+      camera-02:
+        - id: main-zone
+          points:
+            - [0.05, 0.10]
+            - [0.95, 0.10]
+            - [0.95, 0.95]
+            - [0.05, 0.95]
+      camera-03:
+        - id: main-zone
+          points:
+            - [0.05, 0.10]
+            - [0.95, 0.10]
+            - [0.95, 0.95]
+            - [0.05, 0.95]

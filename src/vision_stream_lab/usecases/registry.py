@@ -22,16 +22,12 @@ def get_plugin(use_case_type: str) -> UseCasePlugin:
     """Discover ``usecases/<type>/plugin.py`` without a central type registry."""
     normalized = str(use_case_type)
     if not _PLUGIN_TYPE_PATTERN.fullmatch(normalized):
-        raise ValueError(
-            f"Invalid use-case type {normalized!r}; expected lowercase snake_case"
-        )
+        raise ValueError(f"Invalid use-case type {normalized!r}; expected lowercase snake_case")
     module_name = f"{__package__}.{normalized}.plugin"
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
-        if not exc.name or not (
-            exc.name == module_name or module_name.startswith(f"{exc.name}.")
-        ):
+        if not exc.name or not (exc.name == module_name or module_name.startswith(f"{exc.name}.")):
             raise
         available = ", ".join(registered_use_cases())
         raise ValueError(
@@ -42,8 +38,7 @@ def get_plugin(use_case_type: str) -> UseCasePlugin:
         raise TypeError(f"{module_name} must export PLUGIN: UseCasePlugin")
     if plugin.type != normalized:
         raise ValueError(
-            f"Plugin type mismatch: folder/config={normalized!r}, "
-            f"PLUGIN.type={plugin.type!r}"
+            f"Plugin type mismatch: folder/config={normalized!r}, PLUGIN.type={plugin.type!r}"
         )
     return plugin
 
@@ -107,5 +102,22 @@ def render_latest(
         target_timestamp,
         now,
         ttl_ms,
+        config.plugin_config,
+    )
+
+
+def render_static_overlay(
+    config: UseCaseDeploymentConfig,
+    image: np.ndarray,
+    camera_id: str,
+    shared_state: Any,
+) -> np.ndarray:
+    renderer = get_plugin(config.type).render_static_overlay
+    if renderer is None:
+        return image
+    return renderer(
+        image,
+        camera_id,
+        shared_state,
         config.plugin_config,
     )

@@ -3,9 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from vision_stream_lab.configuration import camera_belongs_to_shard, load_config
+from vision_stream_lab.configuration import (
+    camera_belongs_to_shard,
+    compose_config_document,
+    load_config,
+    load_config_document,
+)
 from vision_stream_lab.enums import OutputRenderMode
-from vision_stream_lab.inference.detection.yolo.config import OnnxYoloConfig
+from vision_stream_lab.inference.detection.yolo.config import UltralyticsYoloConfig
 from vision_stream_lab.schema.camera import CameraDefinition
 
 
@@ -27,13 +32,21 @@ def test_load_example_config():
     assert config.runtime.worker_defaults.batch_size == 4
     assert config.runtime.sharding.index == 0
     assert config.runtime.sharding.count == 1
-    assert config.monitoring.stream_fps == 12
+    assert config.monitoring.stream_fps == 15
     assert config.monitoring.render_mode is OutputRenderMode.DELAYED_MATCHED
     assert config.monitoring.alignment_delay_ms == 250
     assert config.monitoring.frame_buffer_size == 16
     assert config.deployments[0].plugin_config.tracker.enabled is False
-    assert isinstance(config.deployments[0].plugin_config.inference, OnnxYoloConfig)
+    assert isinstance(
+        config.deployments[0].plugin_config.inference,
+        UltralyticsYoloConfig,
+    )
     assert config.deployments[0].plugin_config.inference.confidence == 0.2
+    assert set(config.deployments[0].plugin_config.spatial.zones.cameras) == {
+        "camera-01",
+        "camera-02",
+        "camera-03",
+    }
     assert config.deployments[0].runtime.batch_size == 4
     assert config.deployments[0].runtime.batch_wait_ms == 12
     assert config.deployments[0].runtime_source("batch_size") == (
@@ -58,6 +71,37 @@ def test_output_render_modes_are_normalized():
         "inference_only",
         "latest_predictions",
     }
+
+
+def test_object_detection_profile_composes_camera_independent_default():
+    config_root = Path(__file__).parents[1] / "configs"
+    default_path = config_root / "usecases" / "object_detection" / "default.yaml"
+    profile_path = (
+        config_root
+        / "usecases"
+        / "object_detection"
+        / "profiles"
+        / "road-traffic.yaml"
+    )
+
+    default = load_config_document(default_path, config_root=config_root)
+    profile = compose_config_document(profile_path, config_root=config_root)
+
+    assert default["spatial"]["zones"] == {
+        "enabled": False,
+        "anchor": "bottom_center",
+        "cameras": {},
+    }
+    assert profile.data["spatial"]["zones"]["enabled"] is True
+    assert set(profile.data["spatial"]["zones"]["cameras"]) == {
+        "camera-01",
+        "camera-02",
+        "camera-03",
+    }
+    assert profile.sources["tracker.enabled"] == "usecases/object_detection/default.yaml"
+    assert profile.sources["inference.confidence"] == (
+        "usecases/object_detection/profiles/road-traffic.yaml"
+    )
 
 
 def test_invalid_shard_raises():
@@ -139,10 +183,16 @@ person-detection:
   type: object_detection
   cameras: [camera-01]
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/profiles/road-traffic.yaml
     inference:
       confidence: 0.65
       classes: [0]
+    spatial:
+      zones:
+        cameras:
+          camera-01:
+            - id: person-only-area
+              points: [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]
   alert:
     $ref: alerts/object_detection.yaml
 """,
@@ -156,5 +206,13 @@ person-detection:
     assert deployments["object-detection"].plugin_config.inference.confidence == 0.2
     assert deployments["person-detection"].plugin_config.inference.confidence == 0.65
     assert deployments["person-detection"].plugin_config.inference.classes == [0]
+    object_zone = deployments["object-detection"].plugin_config.spatial.zones.cameras[
+        "camera-01"
+    ][0]
+    person_zone = deployments["person-detection"].plugin_config.spatial.zones.cameras[
+        "camera-01"
+    ][0]
+    assert object_zone.id == "main-zone"
+    assert person_zone.id == "person-only-area"
     assert deployments["person-detection"].accepts_camera("camera-01")
     assert not deployments["person-detection"].accepts_camera("camera-02")

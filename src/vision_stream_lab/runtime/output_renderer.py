@@ -10,7 +10,7 @@ import numpy as np
 from ..enums import OutputRenderMode
 from ..schema.config import MonitoringConfig, UseCaseDeploymentConfig
 from ..schema.frame import UseCaseCameraState
-from ..usecases import render_latest
+from ..usecases import render_latest, render_static_overlay
 from .shared_frames import SharedFrameStore
 
 
@@ -44,20 +44,14 @@ class UseCaseOutputRenderer:
         self.states = states
         self.stop_event = stop_event
         self.thread: threading.Thread | None = None
-        self.fps_samples = {
-            camera_id: deque(maxlen=30) for camera_id in self.camera_ids
-        }
+        self.fps_samples = {camera_id: deque(maxlen=30) for camera_id in self.camera_ids}
         self.raw_buffers = {
-            camera_id: deque(maxlen=monitoring.frame_buffer_size)
-            for camera_id in self.camera_ids
+            camera_id: deque(maxlen=monitoring.frame_buffer_size) for camera_id in self.camera_ids
         }
         self.inference_buffers = {
-            camera_id: deque(maxlen=monitoring.frame_buffer_size)
-            for camera_id in self.camera_ids
+            camera_id: deque(maxlen=monitoring.frame_buffer_size) for camera_id in self.camera_ids
         }
-        self.buffer_locks = {
-            camera_id: threading.Lock() for camera_id in self.camera_ids
-        }
+        self.buffer_locks = {camera_id: threading.Lock() for camera_id in self.camera_ids}
         self.last_raw_sequences = dict.fromkeys(self.camera_ids, 0)
         self.last_inference_sequences = dict.fromkeys(self.camera_ids, 0)
 
@@ -79,18 +73,14 @@ class UseCaseOutputRenderer:
         """Capture every raw sequence needed by delayed matched rendering."""
         if self.monitoring.render_mode is not OutputRenderMode.DELAYED_MATCHED:
             return
-        result = self.raw_store.slots[camera_id].read_if_new(
-            self.last_raw_sequences[camera_id]
-        )
+        result = self.raw_store.slots[camera_id].read_if_new(self.last_raw_sequences[camera_id])
         if result is None:
             return
         image, sequence, timestamp = result
         with self.buffer_locks[camera_id]:
             if sequence == self.last_raw_sequences[camera_id]:
                 return
-            self.raw_buffers[camera_id].append(
-                _BufferedFrame(image, sequence, timestamp)
-            )
+            self.raw_buffers[camera_id].append(_BufferedFrame(image, sequence, timestamp))
             self.last_raw_sequences[camera_id] = sequence
 
     def _cache_latest_inference(self, camera_id: str) -> None:
@@ -100,14 +90,10 @@ class UseCaseOutputRenderer:
         if result is None:
             return
         image, sequence, timestamp = result
-        self.inference_buffers[camera_id].append(
-            _BufferedFrame(image, sequence, timestamp)
-        )
+        self.inference_buffers[camera_id].append(_BufferedFrame(image, sequence, timestamp))
         self.last_inference_sequences[camera_id] = sequence
 
-    def _select_delayed_raw(
-        self, camera_id: str, target_timestamp: float
-    ) -> _BufferedFrame | None:
+    def _select_delayed_raw(self, camera_id: str, target_timestamp: float) -> _BufferedFrame | None:
         with self.buffer_locks[camera_id]:
             frames = self.raw_buffers[camera_id]
             while len(frames) > 1 and frames[1].timestamp <= target_timestamp:
@@ -128,16 +114,20 @@ class UseCaseOutputRenderer:
         while inference_frames and inference_frames[0].sequence < raw.sequence:
             inference_frames.popleft()
         inferred = next(
-            (
-                item
-                for item in reversed(inference_frames)
-                if item.sequence == raw.sequence
-            ),
+            (item for item in reversed(inference_frames) if item.sequence == raw.sequence),
             None,
         )
         if inferred is not None:
             return inferred.image, inferred.timestamp
-        return raw.image, raw.timestamp
+        return (
+            render_static_overlay(
+                self.use_case,
+                raw.image,
+                camera_id,
+                self.states[camera_id].plugin_state,
+            ),
+            raw.timestamp,
+        )
 
     def render_once(self) -> None:
         now = time.time()
@@ -162,6 +152,13 @@ class UseCaseOutputRenderer:
                 if inferred_sequence:
                     frame = inferred
                     frame_timestamp = inferred_timestamp
+                else:
+                    frame = render_static_overlay(
+                        self.use_case,
+                        frame,
+                        camera_id,
+                        self.states[camera_id].plugin_state,
+                    )
             elif self.monitoring.render_mode is OutputRenderMode.LATEST_PREDICTIONS:
                 frame = render_latest(
                     self.use_case,
@@ -173,9 +170,7 @@ class UseCaseOutputRenderer:
                 )
             self._write_output(camera_id, frame, frame_timestamp)
 
-    def _write_output(
-        self, camera_id: str, frame: np.ndarray, frame_timestamp: float
-    ) -> None:
+    def _write_output(self, camera_id: str, frame: np.ndarray, frame_timestamp: float) -> None:
         self.output_store.slots[camera_id].write(frame, frame_timestamp)
         state = self.states[camera_id]
         state.rendered_frames.value += 1

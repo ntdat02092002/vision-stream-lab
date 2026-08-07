@@ -67,6 +67,21 @@ def _render_latest(
     )
 
 
+def _render_static_overlay(
+    image: np.ndarray,
+    camera_id: str,
+    shared_state: Any,
+    config: Any,
+) -> np.ndarray:
+    if not isinstance(config, ObjectDetectionConfig):
+        raise TypeError("object_detection requires ObjectDetectionConfig")
+    if not isinstance(shared_state, SharedObjectDetectionState):
+        raise TypeError("object_detection requires SharedObjectDetectionState")
+    from .rendering import render_static_overlay
+
+    return render_static_overlay(image, camera_id, config)
+
+
 PLUGIN = UseCasePlugin(
     type="object_detection",
     parse_config=parse_object_detection_config,
@@ -74,4 +89,5 @@ PLUGIN = UseCasePlugin(
     create_shared_state=_create_shared_state,
     publish_result=_publish_result,
     render_latest=_render_latest,
+    render_static_overlay=_render_static_overlay,
 )

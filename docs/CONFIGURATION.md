@@ -9,8 +9,9 @@ the service keeps its ordinary CLI, working directory, and process lifecycle.
 configs/app.yaml
 |- cameras: $ref cameras.yaml
 `- deployments: $ref deployments.yaml
-   `- <deployment>.config: $ref usecases/<profile>.yaml
-      `- inference: $ref inference/<objective>/<family>/<preset>.yaml
+   `- <deployment>.config: $ref usecases/<type>/profiles/<profile>.yaml
+      `- $ref: usecases/<type>/default.yaml
+         `- inference: $ref inference/<objective>/<family>/<preset>.yaml
 ```
 
 `app.yaml` is the only loader entry point. Every `$ref` is resolved relative to
@@ -25,13 +26,77 @@ files separately.
 | `app.yaml` | Worker defaults, instance sharding, frame shape, monitoring, root references |
 | `cameras.yaml` | Camera IDs, sources, capture policy, optional shard pinning |
 | `deployments.yaml` | Plugin selection, camera assignment, worker override, plugin config tree, alert policy |
-| `usecases/*.yaml` | One plugin profile: algorithms, thresholds, trackers, zones, inference composition |
+| `usecases/<type>/default.yaml` | Camera-independent baseline owned by one plugin type |
+| `usecases/<type>/profiles/*.yaml` | Complete site/workload profiles composed over that plugin baseline |
 | `inference/<objective>/<family>/*.yaml` | Reusable model/backend preset for detection, segmentation, classification, recognition, etc. |
 | `alerts/*.yaml` | Reusable generic alert side-effect policy |
 
 Plugin-specific fields stay below `deployments.<id>.config`. The selected plugin
 parses that mapping into its own typed schema. Generic runtime code therefore
 does not need edits when a use case or inference objective is added.
+
+## Object-detection spatial configuration
+
+`object_detection.spatial` groups camera geometry by behavior instead of calling
+every polygon an ROI. The implemented `zones` rule filters detections after
+full-frame inference. Membership uses bbox `bottom_center` by default, matching
+the object's ground-contact point; use `center` when geometric-center membership
+is more appropriate.
+
+```yaml
+spatial:
+  coordinate_space: normalized
+  reference_size: null
+  zones:
+    enabled: true
+    anchor: bottom_center
+    cameras:
+      camera-01:
+        - id: loading-area
+          points:
+            - [0.10, 0.20]
+            - [0.90, 0.20]
+            - [0.90, 0.95]
+            - [0.10, 0.95]
+  rendering:
+    show_zones: true
+    zone_color: [0, 165, 255]
+    zone_thickness: 2
+```
+
+`spatial` stays inline in the use-case profile because it is opaque,
+plugin-owned config rather than a generic runtime subsystem. In the general
+many-camera, many-use-case topology, its effective ownership is one
+`(deployment, camera)` pair:
+
+- `deployments.<id>.cameras` routes frames into that deployment;
+- `deployments.<id>.config.spatial.zones.cameras.<camera-id>` supplies geometry
+  used only by that plugin instance;
+- the same camera may therefore use different geometry in another deployment;
+- geometry for a camera not routed to the deployment is harmless and unused.
+
+This keeps the runtime independent of polygons, lines, crops, and other
+plugin-specific concepts. If spatial data becomes large, split it under the
+owning use-case profile (for example `usecases/object_detection/spatial/`) and
+compose it with `$ref`; do not create a generic top-level spatial layer unless
+multiple plugins deliberately adopt and validate one shared spatial contract.
+
+Normalized points are portable across frame sizes. To migrate a legacy pixel
+polygon, use `coordinate_space: pixels` and add `reference_size: [width,
+height]`; the plugin scales it to the runtime frame. Disabled zones or a camera
+with no polygons preserves full-frame behavior. Zone filtering changes boxes
+and event counts, while `rendering` changes visualization only.
+
+The names intentionally leave room for two different future features:
+
+- `spatial.tripwires`: line-crossing/direction/count events based on tracked
+  trajectories.
+- `spatial.inference_rois`: crop or tile regions before inference, then map and
+  deduplicate detections in full-frame coordinates. This is the compute-saving,
+  small-object use case sometimes informally called “zoom ROI”.
+
+These two sections are not accepted yet. Unknown spatial keys fail at startup so
+a misspelled or not-yet-implemented rule cannot silently appear to work.
 
 Generic dataclasses are loaded through `OmegaConf.structured`, so unknown keys,
 missing required values, and incompatible primitive types fail at the config
@@ -56,7 +121,7 @@ road-detection:
   type: object_detection
   cameras: [gate-west]
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/profiles/road-gate.yaml
 ```
 
 This shape gives every item a stable OmegaConf path such as
@@ -117,7 +182,7 @@ heavy-segmentation:
     batch_size: 2
     batch_wait_ms: 25
   config:
-    $ref: usecases/semantic_segmentation.yaml
+    $ref: usecases/semantic_segmentation/default.yaml
 ```
 
 The loader resolves `app.runtime.worker_defaults` with the deployment's
@@ -153,21 +218,21 @@ backend discriminator, config union, parser, and backend factory. Adding
 sibling Python package and preset directory; it does not add branches to the
 generic configuration loader.
 
-Multiple deployments may reference the same plugin profile while locally
-overriding its `config` subtree:
+Multiple deployments may reference a complete profile or compose directly from
+the same plugin baseline while locally overriding their `config` subtree:
 
 ```yaml
 road-detection:
   type: object_detection
   cameras: [road-01, road-02]
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/profiles/road-traffic.yaml
 
 person-detection:
   type: object_detection
   cameras: [lobby-01]
   config:
-    $ref: usecases/object_detection.yaml
+    $ref: usecases/object_detection/default.yaml
     inference:
       confidence: 0.55
       classes: [0]
@@ -175,6 +240,9 @@ person-detection:
 
 Both mappings are fully composed before the same object-detection plugin parser
 validates them, and each deployment creates its own worker/pipeline instance.
+`default.yaml` must not contain camera IDs, site geometry, or customer-specific
+thresholds. Put those values in `profiles/<name>.yaml`; use names describing the
+workload/site rather than repeating the deployment ID.
 
 ## Inspecting the resolved config
 
@@ -194,7 +262,7 @@ Example source entries:
 
 ```text
 deployments.object-detection.config.inference.model_path: inference/detection/yolo/yolo11n_onnx.yaml
-deployments.object-detection.config.inference.confidence: usecases/object_detection.yaml
+deployments.object-detection.config.inference.confidence: usecases/object_detection/profiles/road-traffic.yaml
 runtime.worker_defaults.batch_size: app.yaml
 ```
 

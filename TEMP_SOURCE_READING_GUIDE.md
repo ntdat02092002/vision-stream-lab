@@ -176,9 +176,10 @@ Vòng đầu chỉ cần hiểu trách nhiệm và các điểm nối. Chưa c�
 1. [`configs/app.yaml`](configs/app.yaml)
 2. [`configs/cameras.yaml`](configs/cameras.yaml)
 3. [`configs/deployments.yaml`](configs/deployments.yaml)
-4. [`configs/usecases/object_detection.yaml`](configs/usecases/object_detection.yaml)
-5. [`configs/inference/detection/yolo/yolo11n_onnx.yaml`](configs/inference/detection/yolo/yolo11n_onnx.yaml)
-6. [`configs/alerts/object_detection.yaml`](configs/alerts/object_detection.yaml)
+4. [`configs/usecases/object_detection/profiles/road-traffic.yaml`](configs/usecases/object_detection/profiles/road-traffic.yaml)
+5. [`configs/usecases/object_detection/default.yaml`](configs/usecases/object_detection/default.yaml)
+6. [`configs/inference/detection/yolo/yolo11n_pt.yaml`](configs/inference/detection/yolo/yolo11n_pt.yaml)
+7. [`configs/alerts/object_detection.yaml`](configs/alerts/object_detection.yaml)
 
 Cần trả lời được:
 
@@ -197,7 +198,8 @@ app.yaml
 ├── runtime/frame/monitoring       cấu hình dùng chung toàn app
 ├── cameras: $ref cameras.yaml
 └── deployments: $ref deployments.yaml
-    ├── config: $ref usecases/*.yaml
+    ├── config: $ref usecases/<type>/profiles/*.yaml
+    │   ├── $ref usecases/<type>/default.yaml
     │   └── inference: $ref inference/<objective>/*.yaml
     └── alert: $ref alerts/*.yaml
 ```
@@ -602,7 +604,7 @@ Hiện không tồn tại:
 
 ### Đổi threshold, class filter, backend hoặc model
 
-Sửa [`configs/usecases/object_detection.yaml`](configs/usecases/object_detection.yaml).
+Sửa baseline trong [`configs/usecases/object_detection/default.yaml`](configs/usecases/object_detection/default.yaml), hoặc sửa workload/site override trong profile tương ứng dưới `configs/usecases/object_detection/profiles/`.
 
 Nếu thêm field config mới:
 
