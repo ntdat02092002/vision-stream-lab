@@ -18,6 +18,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PyTorch publishes CPU and CUDA wheels on separate indexes. Keep both runtime
+# variants on the same public Torch/Torchvision versions so CPU/GPU behavior is
+# comparable. Use scripts/install_runtime.py; a bare `pip install .[gpu]` cannot
+# discover the CUDA wheel without the PyTorch index.
+cpu = [
+  "torch==2.11.0+cpu",
+  "torchvision==0.26.0+cpu",
+  "ultralytics>=8.3,<9",
+]
+gpu = [
+  "torch==2.11.0+cu128",
+  "torchvision==0.26.0+cu128",
+  "ultralytics>=8.3,<9",
+]
 triton = ["tritonclient[grpc]>=2.47,<3"]
 export = ["onnx>=1.16,<2", "onnxslim>=0.1.82,<1", "ultralytics>=8.3,<9"]
 dev = ["httpx>=0.27,<1", "pytest>=8,<9", "ruff>=0.6,<1"]

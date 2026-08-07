@@ -429,25 +429,44 @@ NumPy NMS, and coordinate restoration.
 
 The checked working tree contains `models/yolo11n.onnx`, exported with dynamic
 batch and dynamic image axes. To re-export from a `.pt` checkpoint, install the
-optional exporter and run:
+runtime variant plus the optional exporter and run:
 
 ```powershell
-pip install -e ".[export]"
+python scripts\install_runtime.py --variant auto --with-export
 python scripts\export_yolo_onnx.py `
   --model models\yolo11n.pt `
   --output models\yolo11n.onnx
 ```
 
-Ultralytics and PyTorch are exporter-only dependencies. A normal runtime install
-uses `onnxruntime` and does not install them. For NVIDIA execution, replace the CPU
-package with the CUDA-compatible `onnxruntime-gpu` build and select
-`CUDAExecutionProvider`.
+Ultralytics and PyTorch are not base dependencies; the CPU, GPU, and export
+extras install them when needed. An ONNX-only runtime uses `onnxruntime`. For
+NVIDIA ONNX execution, replace the CPU package with the CUDA-compatible
+`onnxruntime-gpu` build and select `CUDAExecutionProvider`.
 
 ### Local YOLO
 
-`inference/detection/yolo/ultralytics.py` remains as a comparison/debug backend. Install
-`.[export]`, set `backend: ultralytics`, and change `model_path` back to the `.pt`
-checkpoint before using it.
+`inference/detection/yolo/ultralytics.py` remains as a comparison/debug backend.
+Install a CPU or GPU runtime variant, set `backend: ultralytics`, and point
+`model_path` at the `.pt` checkpoint:
+
+```powershell
+# Convenient local setup: selects GPU when nvidia-smi reports an NVIDIA GPU.
+python scripts\install_runtime.py --variant auto
+
+# Reproducible deployment setup: select the intended target explicitly.
+python scripts\install_runtime.py --variant gpu
+python scripts\install_runtime.py --variant cpu
+```
+
+Standard `pyproject.toml` environment markers cannot inspect GPU hardware. The
+installer resolves `auto`, while the `.[gpu]` and `.[cpu]` extras pin matching
+Torch 2.11/Torchvision 0.26 builds. Direct extra installation must include the
+corresponding PyTorch package index:
+
+```powershell
+pip install -e ".[gpu]" --extra-index-url https://download.pytorch.org/whl/cu128
+pip install -e ".[cpu]" --extra-index-url https://download.pytorch.org/whl/cpu
+```
 
 ### Triton
 
@@ -602,7 +621,7 @@ For multiple GPUs, run one service instance per shard and set the object-detecti
 cd C:\datnt\vision-stream-lab
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+python scripts\install_runtime.py --variant auto --with-dev
 python scripts\generate_demo_videos.py --count 2
 vision-stream-lab --config configs\app.yaml
 ```
