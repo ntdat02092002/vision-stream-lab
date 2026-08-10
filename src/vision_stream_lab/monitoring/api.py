@@ -77,6 +77,7 @@ def create_app(
     frontend_dir = Path(__file__).with_name("frontend")
     app.mount("/assets", StaticFiles(directory=frontend_dir), name="assets")
     camera_names = {camera.id: camera.name for camera in config.cameras}
+    cameras_by_id = {camera.id: camera for camera in config.cameras}
     use_case_types = {use_case.id: use_case.type for use_case in config.deployments}
     use_cases_by_id = {use_case.id: use_case for use_case in config.deployments}
     primary_use_case = next(iter(output_stores))
@@ -122,6 +123,11 @@ def create_app(
                 {
                     "id": camera_id,
                     "name": camera_names[camera_id],
+                    "source_type": cameras_by_id[camera_id].source_type.value,
+                    "timing_mode": (
+                        cameras_by_id[camera_id].resolved_timing_mode.value
+                    ),
+                    "max_fps": cameras_by_id[camera_id].max_fps,
                     "online": bool(state.online.value),
                     "capture_fps": round(state.capture_fps.value, 2),
                     "captured": int(state.captured_frames.value),

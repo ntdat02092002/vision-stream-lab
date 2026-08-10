@@ -87,6 +87,9 @@ def test_camera_wall_assets_status_and_snapshot_endpoints():
             "frame_buffer_size": 16,
         }
         assert status["cameras"][0]["id"] == "camera-01"
+        assert status["cameras"][0]["source_type"] == "device"
+        assert status["cameras"][0]["timing_mode"] == "realtime"
+        assert status["cameras"][0]["max_fps"] == 0
         assert status["use_cases"][0]["runtime"]["batch_size"] == {
             "value": 4,
             "source": "runtime.worker_defaults.batch_size",

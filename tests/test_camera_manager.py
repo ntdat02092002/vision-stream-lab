@@ -6,11 +6,13 @@ import cv2
 import numpy as np
 import pytest
 
-from vision_stream_lab.enums import CameraSourceType
+from vision_stream_lab.enums import CameraSourceType, SourceTimingMode
 from vision_stream_lab.runtime.shared_frames import SharedFrameStore, create_camera_states
 from vision_stream_lab.schema.camera import CameraDefinition
 from vision_stream_lab.streaming import CameraManager, VideoStream, create_file_cameras
 from vision_stream_lab.streaming.video_stream import (
+    _MediaTimelinePacer,
+    _RealtimeSampler,
     _resolve_video_timeline_fps,
     _video_sampling_parameters,
 )
@@ -64,6 +66,65 @@ def test_create_file_cameras_rejects_missing_or_unsupported_input(tmp_path: Path
     unsupported.touch()
     with pytest.raises(ValueError, match="Unsupported video file"):
         create_file_cameras([unsupported])
+
+
+def test_source_timing_auto_distinguishes_segmented_and_realtime_streams():
+    hls = CameraDefinition(
+        id="hls",
+        name="HLS",
+        source="https://example.test/live/index.m3u8?token=secret",
+    )
+    dash = CameraDefinition(
+        id="dash",
+        name="DASH",
+        source="https://example.test/live/manifest.mpd",
+    )
+    rtsp = CameraDefinition(
+        id="rtsp",
+        name="RTSP",
+        source="rtsp://example.test/live",
+    )
+    overridden = CameraDefinition(
+        id="custom",
+        name="Custom segmented endpoint",
+        source="https://example.test/playback?id=1",
+        timing_mode=SourceTimingMode.MEDIA_TIMELINE,
+    )
+
+    assert hls.source_type is CameraSourceType.SEGMENTED_STREAM
+    assert dash.source_type is CameraSourceType.SEGMENTED_STREAM
+    assert hls.resolved_timing_mode is SourceTimingMode.MEDIA_TIMELINE
+    assert dash.resolved_timing_mode is SourceTimingMode.MEDIA_TIMELINE
+    assert rtsp.source_type is CameraSourceType.NETWORK_STREAM
+    assert rtsp.resolved_timing_mode is SourceTimingMode.REALTIME
+    assert overridden.resolved_timing_mode is SourceTimingMode.MEDIA_TIMELINE
+
+
+def test_media_timeline_pacer_spreads_burst_frames_and_does_not_catch_up():
+    pacer = _MediaTimelinePacer(reported_fps=25.0, max_fps=0)
+
+    assert pacer.plan(timestamp_ms=0.0, now=100.0) == 0
+    assert pacer.plan(timestamp_ms=40.0, now=100.0) == pytest.approx(0.04)
+    assert pacer.plan(timestamp_ms=80.0, now=100.04) == pytest.approx(0.04)
+
+    stalled = _MediaTimelinePacer(reported_fps=25.0, max_fps=0)
+    assert stalled.plan(timestamp_ms=0.0, now=100.0) == 0
+    assert stalled.plan(timestamp_ms=40.0, now=101.0) == 0
+    assert stalled.plan(timestamp_ms=80.0, now=101.0) == pytest.approx(0.04)
+
+    sampled = _MediaTimelinePacer(reported_fps=25.0, max_fps=10.0)
+    assert sampled.plan(timestamp_ms=float("nan"), now=200.0) == 0
+    assert sampled.plan(timestamp_ms=float("nan"), now=200.0) is None
+    assert sampled.plan(timestamp_ms=float("nan"), now=200.0) is None
+    assert sampled.plan(timestamp_ms=float("nan"), now=200.0) == pytest.approx(0.12)
+
+
+def test_realtime_sampler_caps_publication_without_sleeping_the_reader():
+    sampler = _RealtimeSampler(max_fps=15.0)
+
+    assert sampler.should_publish(100.0)
+    assert not sampler.should_publish(100.01)
+    assert sampler.should_publish(100.07)
 
 
 def test_video_stream_rewinds_file_until_stopped(monkeypatch):

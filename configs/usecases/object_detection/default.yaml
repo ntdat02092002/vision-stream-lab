@@ -20,5 +20,5 @@ spatial:
     cameras: {}
   rendering:
     show_zones: true
-    zone_color: [0, 165, 255]  # OpenCV BGR: orange
+    zone_color: [0, 0, 255]  # OpenCV BGR
     zone_thickness: 2

@@ -112,8 +112,16 @@ Cameras and deployments are mappings, not lists with repeated `id` fields:
 gate-west:
   name: West gate
   source: rtsp://example/stream
+  timing_mode: auto
+  max_fps: 15
   enabled: true
 ```
+
+`timing_mode` belongs to the source layer. `auto` treats files and segmented
+HLS/DASH URLs as `media_timeline`, distributing burst-decoded frames according
+to PTS/FPS. RTSP, devices, and other live URLs use `realtime`: the reader keeps
+draining and `max_fps` only samples which frames are published. Explicitly set
+`media_timeline` for a segmented endpoint without a `.m3u8`/`.mpd` suffix.
 
 ```yaml
 # deployments.yaml

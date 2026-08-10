@@ -18,3 +18,10 @@ camera-03:
   loop: true
   max_fps: 15
   enabled: true
+
+camera-04:
+  name: RTSP test
+  source: "rtsp://rtsp.rtsplink.com:8554/live/objects?token=b3fefef77fb6c2d2af2795a41087b390d5892d50d295bb17c1c5c70fcd152cb0"
+  loop: false
+  max_fps: 15
+  enabled: true

@@ -318,6 +318,7 @@ camera-01:
   source: videos/loading-bay.mp4  # file, RTSP URL, or integer webcam ID
   loop: true
   max_fps: 15                    # sampling cap; 0 uses the file's native FPS
+  timing_mode: auto              # auto | realtime | media_timeline
   enabled: true
   shard: 0                       # optional explicit instance assignment
 ```
@@ -331,6 +332,19 @@ duration. Some camera exporters write bogus container rates such as 600 FPS; whe
 the reported value is implausible, the reader derives cadence from frame
 timestamps instead. Set `max_fps: 0` to emit every frame at that resolved timeline
 rate.
+
+Source timing is handled before frames enter shared memory or inference:
+
+- `auto` selects `media_timeline` for local files and segmented `.m3u8`/`.mpd`
+  streams, and `realtime` for RTSP, devices, and other network streams.
+- `realtime` continuously drains the decoder. `max_fps` samples publications by
+  wall-clock time without sleeping the reader, preventing an RTSP backlog.
+- `media_timeline` paces decoded frames by media PTS/FPS. Frames delivered as an
+  HLS segment burst are spread over their intended timeline. Set `max_fps` to the
+  expected rate when a segmented source exposes neither usable PTS nor FPS.
+
+Use an explicit `timing_mode: media_timeline` for segmented endpoints whose URL
+does not end in `.m3u8` or `.mpd`.
 
 #### Run local videos as simulated cameras
 
