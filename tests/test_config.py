@@ -36,23 +36,22 @@ def test_load_example_config():
     assert config.monitoring.render_mode is OutputRenderMode.DELAYED_MATCHED
     assert config.monitoring.alignment_delay_ms == 250
     assert config.monitoring.frame_buffer_size == 16
-    assert config.deployments[0].plugin_config.tracker.enabled is False
+    deployment = config.deployments[0]
+    assert deployment.id == "vehicle-counting-camera-01"
+    assert deployment.plugin_config.tracker.frame_rate == 6.0
     assert isinstance(
-        config.deployments[0].plugin_config.inference,
+        deployment.plugin_config.inference,
         UltralyticsYoloConfig,
     )
-    assert config.deployments[0].plugin_config.inference.confidence == 0.2
-    assert set(config.deployments[0].plugin_config.spatial.zones.cameras) == {
-        "camera-01",
-        "camera-02",
-        "camera-03",
-    }
-    assert config.deployments[0].runtime.batch_size == 4
-    assert config.deployments[0].runtime.batch_wait_ms == 12
-    assert config.deployments[0].runtime_source("batch_size") == (
+    assert deployment.plugin_config.inference.confidence == 0.1
+    assert deployment.plugin_config.inference.classes == [3]
+    assert set(deployment.plugin_config.spatial.cameras) == {"camera-01"}
+    assert deployment.runtime.batch_size == 4
+    assert deployment.runtime.batch_wait_ms == 12
+    assert deployment.runtime_source("batch_size") == (
         "runtime.worker_defaults.batch_size"
     )
-    assert config.deployments[0].runtime_source("batch_wait_ms") == (
+    assert deployment.runtime_source("batch_wait_ms") == (
         "runtime.worker_defaults.batch_wait_ms"
     )
     assert [camera.id for camera in config.cameras] == [
@@ -60,8 +59,9 @@ def test_load_example_config():
         "camera-02",
         "camera-03",
     ]
-    assert config.deployments[0].type == "object_detection"
-    assert config.deployments[0].accepts_camera("camera-01")
+    assert deployment.type == "vehicle_counting"
+    assert deployment.accepts_camera("camera-01")
+    assert not deployment.accepts_camera("camera-02")
     assert Path(config.cameras[0].source).is_absolute()
 
 
@@ -117,8 +117,8 @@ def test_deployment_runtime_override_is_resolved_and_traced(tmp_path):
     deployments_path = config_root / "deployments.yaml"
     deployments_path.write_text(
         deployments_path.read_text().replace(
-            '  cameras: ["*"]\n',
-            '  cameras: ["*"]\n  runtime:\n    batch_size: 2\n',
+            "  cameras: [camera-01]\n",
+            "  cameras: [camera-01]\n  runtime:\n    batch_size: 2\n",
         ),
         encoding="utf-8",
     )
@@ -128,7 +128,7 @@ def test_deployment_runtime_override_is_resolved_and_traced(tmp_path):
     assert deployment.runtime.batch_size == 2
     assert deployment.runtime.batch_wait_ms == 12
     assert deployment.runtime_source("batch_size") == (
-        "deployments.object-detection.runtime.batch_size"
+        "deployments.vehicle-counting-camera-01.runtime.batch_size"
     )
 
 
@@ -139,8 +139,8 @@ def test_legacy_deployment_fields_have_actionable_migration_error(tmp_path):
     deployments_path = config_root / "deployments.yaml"
     deployments_path.write_text(
         deployments_path.read_text().replace(
-            '  cameras: ["*"]\n',
-            '  cameras: ["*"]\n  scheduling: {}\n',
+            "  cameras: [camera-01]\n",
+            "  cameras: [camera-01]\n  scheduling: {}\n",
         ),
         encoding="utf-8",
     )
@@ -179,6 +179,14 @@ def test_multiple_deployments_reuse_a_plugin_profile_independently(tmp_path):
         deployments_path.read_text()
         + """
 
+object-detection-test:
+  type: object_detection
+  cameras: [camera-01]
+  config:
+    $ref: usecases/object_detection/profiles/road-traffic.yaml
+  alert:
+    $ref: alerts/object_detection.yaml
+
 person-detection:
   type: object_detection
   cameras: [camera-01]
@@ -202,11 +210,15 @@ person-detection:
     config = load_config(config_root / "app.yaml")
     deployments = {deployment.id: deployment for deployment in config.deployments}
 
-    assert set(deployments) == {"object-detection", "person-detection"}
-    assert deployments["object-detection"].plugin_config.inference.confidence == 0.2
+    assert set(deployments) == {
+        "vehicle-counting-camera-01",
+        "object-detection-test",
+        "person-detection",
+    }
+    assert deployments["object-detection-test"].plugin_config.inference.confidence == 0.2
     assert deployments["person-detection"].plugin_config.inference.confidence == 0.65
     assert deployments["person-detection"].plugin_config.inference.classes == [0]
-    object_zone = deployments["object-detection"].plugin_config.spatial.zones.cameras[
+    object_zone = deployments["object-detection-test"].plugin_config.spatial.zones.cameras[
         "camera-01"
     ][0]
     person_zone = deployments["person-detection"].plugin_config.spatial.zones.cameras[

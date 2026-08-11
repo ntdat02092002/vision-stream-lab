@@ -2,7 +2,9 @@
 
 Research runtime for multiple video files/cameras, true batched object detection, and live monitoring.
 
-Phase 1 contains one use case: `object_detection`. The runtime already supports multiple use cases without changing camera capture, shared memory, monitoring, or process lifecycle code.
+The repository ships with `object_detection` and a practical `vehicle_counting`
+use case. Both run through the same multi-camera runtime without coupling camera
+capture, shared memory, monitoring, or process lifecycle code to either plugin.
 
 ## Architecture
 
@@ -421,6 +423,26 @@ configured bbox anchor lies inside a zone. It does not crop the model input.
 The namespace is reserved for future `tripwires` (line-crossing events) and
 `inference_rois` (pre-model crop/tile regions). See
 [Object-detection spatial configuration](docs/CONFIGURATION.md#object-detection-spatial-configuration).
+
+### Vehicle counting
+
+`vehicle_counting` is a separate plugin that leaves the object-detection demo
+unchanged. The included `vehicle-counting-camera-01` deployment reuses YOLO11n,
+keeps only COCO class `2` (`car`), filters detections by a road ROI, and assigns
+persistent IDs with ByteTrack and a Kalman state estimator.
+
+A crossing is accepted only after one ID completes the configured schedule:
+
+```text
+IN:  Line 1 -> observed in transition zone -> Line 2
+OUT: Line 2 -> observed in transition zone -> Line 1
+```
+
+Partial crossings, direct jumps across both lines, timeouts, and returns through
+the first line do not increment the counters. Counts are shown on the video and
+live only for the lifetime of the worker process. Camera-specific normalized
+geometry and tracker thresholds live in
+`configs/usecases/vehicle_counting/profiles/camera-01-road-gate.yaml`.
 
 Inspect the exact resolved tree and winning source file for every leaf:
 

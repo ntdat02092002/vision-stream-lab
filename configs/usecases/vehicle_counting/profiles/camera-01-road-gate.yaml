@@ -1,0 +1,32 @@
+$ref: usecases/vehicle_counting/default.yaml
+
+inference:
+  confidence: 0.10
+  # COCO motorcycle only.
+  classes: [3]
+
+spatial:
+  cameras:
+    camera-01:
+      roi:
+        - [0.42, 0.43]
+        - [0.81, 0.43]
+        - [0.97, 0.99]
+        - [0.34, 0.99]
+      line_1:
+        - [0.37, 0.73]
+        - [0.9, 0.73]
+      line_2:
+        - [0.39, 0.61]
+        - [0.86, 0.6]
+      transition:
+        - [0.37, 0.73]
+        - [0.9, 0.73]
+        - [0.86, 0.6]
+        - [0.39, 0.61]
+      # Far side of the road -> near side of the camera is IN.
+      in_direction: line_1_to_line_2
+
+lifecycle:
+  max_transition_seconds: 90
+  stale_track_seconds: 6

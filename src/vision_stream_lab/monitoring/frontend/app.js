@@ -4,6 +4,7 @@ const emptyState = document.querySelector('#empty-state');
 const useCaseSelect = document.querySelector('#use-case');
 const columnsSelect = document.querySelector('#columns');
 const cards = new Map();
+const cameraUseCases = new Map();
 
 let selectedUseCase = '';
 let streamFps = 12;
@@ -14,9 +15,27 @@ function streamUrl(cameraId) {
   return `/api/cameras/${encodeURIComponent(cameraId)}/stream.mjpg?${query}`;
 }
 
-function connectStream(card, cameraId) {
+function cameraSupportsSelectedUseCase(cameraId) {
+  return cameraUseCases.get(cameraId)?.has(selectedUseCase) || false;
+}
+
+function disconnectStream(card, message) {
   const image = card.querySelector('.camera-stream');
   card.classList.remove('streaming');
+  delete card.dataset.streamUseCase;
+  image.removeAttribute('src');
+  card.querySelector('.stream-state').textContent = message;
+}
+
+function connectStream(card, cameraId) {
+  if (!cameraSupportsSelectedUseCase(cameraId)) {
+    disconnectStream(card, 'Pipeline not assigned');
+    return;
+  }
+  const image = card.querySelector('.camera-stream');
+  card.classList.remove('streaming');
+  card.dataset.streamUseCase = selectedUseCase;
+  card.querySelector('.stream-state').textContent = 'Waiting for stream';
   image.src = streamUrl(cameraId);
 }
 
@@ -27,11 +46,17 @@ function createCard(camera) {
   card.querySelector('.camera-id').textContent = camera.id;
   const image = card.querySelector('.camera-stream');
   image.alt = `Live AI output for ${camera.name}`;
-  image.addEventListener('load', () => card.classList.add('streaming'));
+  image.addEventListener('load', () => {
+    if (card.dataset.streamUseCase === selectedUseCase) card.classList.add('streaming');
+  });
   image.addEventListener('error', () => {
     card.classList.remove('streaming');
     window.setTimeout(() => {
-      if (!document.hidden && cards.has(camera.id)) connectStream(card, camera.id);
+      if (
+        !document.hidden
+        && cards.has(camera.id)
+        && cameraSupportsSelectedUseCase(camera.id)
+      ) connectStream(card, camera.id);
     }, 1500);
   });
   card.querySelector('.card-fullscreen').addEventListener('click', () => {
@@ -40,7 +65,6 @@ function createCard(camera) {
   });
   wall.appendChild(card);
   cards.set(camera.id, card);
-  connectStream(card, camera.id);
   return card;
 }
 
@@ -56,6 +80,15 @@ function removeMissingCards(cameraIds) {
 
 function updateCard(card, camera) {
   const metrics = camera.use_cases[selectedUseCase];
+  if (!metrics) {
+    if (card.dataset.streamUseCase || card.querySelector('.camera-stream').hasAttribute('src')) {
+      disconnectStream(card, 'Pipeline not assigned');
+    } else {
+      card.querySelector('.stream-state').textContent = 'Pipeline not assigned';
+    }
+  } else if (!document.hidden && card.dataset.streamUseCase !== selectedUseCase) {
+    connectStream(card, camera.id);
+  }
   card.classList.toggle('online', camera.online);
   card.querySelector('.capture-fps').textContent = camera.capture_fps.toFixed(1);
   card.querySelector('.inference-fps').textContent = metrics ? metrics.inference_fps.toFixed(1) : '—';
@@ -109,14 +142,21 @@ async function refreshStatus() {
     streamFps = data.stream?.fps || 12;
     setUseCases(data);
     updateOverview(data);
-    const cameraIds = new Set(data.cameras.map(camera => camera.id));
-    removeMissingCards(cameraIds);
+    cameraUseCases.clear();
     for (const camera of data.cameras) {
+      cameraUseCases.set(camera.id, new Set(Object.keys(camera.use_cases)));
+    }
+    const visibleCameras = data.cameras.filter(camera =>
+      cameraUseCases.get(camera.id)?.has(selectedUseCase)
+    );
+    const cameraIds = new Set(visibleCameras.map(camera => camera.id));
+    removeMissingCards(cameraIds);
+    for (const camera of visibleCameras) {
       const card = cards.get(camera.id) || createCard(camera);
       updateCard(card, camera);
     }
     if (oldUseCase && oldUseCase !== selectedUseCase) reconnectAllStreams();
-    emptyState.hidden = data.cameras.length > 0;
+    emptyState.hidden = visibleCameras.length > 0;
   } catch (_) {
     document.querySelector('#connection-label').textContent = 'Backend offline';
     document.body.classList.remove('connected');

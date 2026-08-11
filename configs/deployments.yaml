@@ -1,12 +1,23 @@
-object-detection-demo:
-  type: object_detection
-  enabled: true
-  cameras: ["*"]
+# object-detection-demo:
+#   type: object_detection
+#   enabled: true
+#   cameras: ["*"]
 
-  # Generic composition resolves this tree before the object_detection plugin
-  # parses and validates its own schema.
+#   # Generic composition resolves this tree before the object_detection plugin
+#   # parses and validates its own schema.
+#   config:
+#     $ref: usecases/object_detection/profiles/road-traffic.yaml
+
+#   alert:
+#     $ref: alerts/object_detection.yaml
+
+vehicle-counting-camera-01:
+  type: vehicle_counting
+  enabled: true
+  cameras: [camera-01]
+
   config:
-    $ref: usecases/object_detection/profiles/road-traffic.yaml
+    $ref: usecases/vehicle_counting/profiles/camera-01-road-gate.yaml
 
   alert:
-    $ref: alerts/object_detection.yaml
+    $ref: alerts/vehicle_counting.yaml
