@@ -1,0 +1,37 @@
+# Camera-independent defaults for the red-light-violation plugin.
+inference:
+  $ref: inference/detection/yolo/yolo11n_pt.yaml
+
+tracker:
+  frame_rate: 6.0
+  lost_track_buffer: 30
+  track_activation_threshold: 0.35
+  high_conf_det_threshold: 0.30
+  minimum_consecutive_frames: 2
+  minimum_iou_threshold: 0.10
+  max_extrapolation_ms: 150
+
+spatial:
+  coordinate_space: normalized
+  reference_size: null
+  anchor: bottom_center
+  cameras: {}
+
+lifecycle:
+  stale_track_seconds: 2.0
+  max_transition_seconds: 4.0
+  crossing_hysteresis_px: 4.0
+
+rendering:
+  show_roi: true
+  show_transition: true
+  show_gate: true
+  show_boxes: true
+  show_counts: true
+  roi_color: [255, 255, 0]
+  transition_color: [0, 180, 180]
+  line_1_color: [0, 255, 0]
+  line_2_color: [0, 0, 255]
+  box_color: [40, 220, 40]
+  thickness: 2
+
