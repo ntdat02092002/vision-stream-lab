@@ -15,9 +15,9 @@ class SharedRedLightViolationState:
     boxes: Any
     velocities: Any
     track_ids: Any
+    box_states: Any
     count: Any
-    in_count: Any
-    out_count: Any
+    violation_count: Any
     source_sequence: Any
     timestamp: Any
     geometry_points: Any
@@ -33,9 +33,9 @@ class RedLightViolationSnapshot:
     boxes: np.ndarray
     velocities: np.ndarray
     track_ids: np.ndarray
+    box_states: np.ndarray
     geometry: ResolvedGeometry | None
-    in_count: int
-    out_count: int
+    violation_count: int
     source_sequence: int
     timestamp: float
 
@@ -44,7 +44,10 @@ def create_shared_state(context: Any, config: RedLightViolationConfig) -> Shared
     capacity = int(getattr(config.inference, "max_detections", 300))
     geometry_capacity = max(
         (
-            len(camera.roi) + len(camera.line_1) + len(camera.line_2) + len(camera.transition)
+            len(camera.roi)
+            + len(camera.stop_line)
+            + len(camera.confirmation_line)
+            + len(camera.transition)
             for camera in config.spatial.cameras.values()
         ),
         default=1,
@@ -53,9 +56,9 @@ def create_shared_state(context: Any, config: RedLightViolationConfig) -> Shared
         boxes=context.RawArray("f", capacity * 6),
         velocities=context.RawArray("f", capacity * 4),
         track_ids=context.RawArray("i", capacity),
+        box_states=context.RawArray("b", capacity),
         count=context.Value("i", 0),
-        in_count=context.Value("Q", 0),
-        out_count=context.Value("Q", 0),
+        violation_count=context.Value("Q", 0),
         source_sequence=context.Value("Q", 0),
         timestamp=context.Value("d", 0.0),
         geometry_points=context.RawArray("f", geometry_capacity * 2),
@@ -76,11 +79,14 @@ def publish_result(
     boxes = result.metadata.get("detections")
     track_ids = result.metadata.get("track_ids")
     velocities = result.metadata.get("velocities")
+    box_states = result.metadata.get("box_states")
     geometry = result.metadata.get("geometry")
     if not isinstance(boxes, np.ndarray) or not isinstance(track_ids, np.ndarray):
         raise TypeError("red_light_violation metadata requires detections and track_ids ndarrays")
     if not isinstance(velocities, np.ndarray):
         raise TypeError("red_light_violation metadata requires velocities ndarray")
+    if not isinstance(box_states, np.ndarray):
+        raise TypeError("red_light_violation metadata requires box_states ndarray")
     if geometry is not None and not isinstance(geometry, ResolvedGeometry):
         raise TypeError("red_light_violation geometry must be ResolvedGeometry or None")
     write_snapshot(
@@ -88,9 +94,9 @@ def publish_result(
         boxes,
         track_ids,
         velocities,
+        box_states,
         geometry,
-        int(result.metadata.get("in_count", 0)),
-        int(result.metadata.get("out_count", 0)),
+        int(result.metadata.get("violation_count", 0)),
         frame_context.sequence,
         frame_context.timestamp,
     )
@@ -101,22 +107,25 @@ def write_snapshot(
     boxes: np.ndarray,
     track_ids: np.ndarray,
     velocities: np.ndarray,
+    box_states: np.ndarray,
     geometry: ResolvedGeometry | None,
-    in_count: int,
-    out_count: int,
+    violation_count: int,
     source_sequence: int,
     timestamp: float,
 ) -> None:
     values = np.asarray(boxes, dtype=np.float32).reshape(-1, 6)
     ids = np.asarray(track_ids, dtype=np.int32).reshape(-1)
     motion = np.asarray(velocities, dtype=np.float32).reshape(-1, 4)
-    if len(values) != len(ids) or len(values) != len(motion):
-        raise ValueError("red_light_violation boxes, IDs, and velocities must have equal length")
+    statuses = np.asarray(box_states, dtype=np.int8).reshape(-1)
+    if not (len(values) == len(ids) == len(motion) == len(statuses)):
+        raise ValueError(
+            "red_light_violation boxes, IDs, velocities, and states must have equal length"
+        )
     count = min(len(values), state.capacity)
     components = () if geometry is None else (
         geometry.roi,
-        geometry.line_1,
-        geometry.line_2,
+        geometry.stop_line,
+        geometry.confirmation_line,
         geometry.transition,
     )
     point_count = sum(len(component) for component in components)
@@ -126,6 +135,7 @@ def write_snapshot(
         box_buffer = np.frombuffer(state.boxes, dtype=np.float32).reshape(state.capacity, 6)
         velocity_buffer = np.frombuffer(state.velocities, dtype=np.float32).reshape(state.capacity, 4)
         id_buffer = np.frombuffer(state.track_ids, dtype=np.int32)
+        state_buffer = np.frombuffer(state.box_states, dtype=np.int8)
         point_buffer = np.frombuffer(state.geometry_points, dtype=np.float32).reshape(
             state.geometry_capacity, 2
         )
@@ -134,6 +144,7 @@ def write_snapshot(
             box_buffer[:count] = values[:count]
             velocity_buffer[:count] = motion[:count]
             id_buffer[:count] = ids[:count]
+            state_buffer[:count] = statuses[:count]
         length_buffer[:] = 0
         offset = 0
         for index, component in enumerate(components):
@@ -142,8 +153,7 @@ def write_snapshot(
             point_buffer[offset : offset + len(points)] = points
             offset += len(points)
         state.count.value = count
-        state.in_count.value = in_count
-        state.out_count.value = out_count
+        state.violation_count.value = violation_count
         state.source_sequence.value = source_sequence
         state.timestamp.value = timestamp
         state.geometry_point_count.value = point_count
@@ -159,6 +169,7 @@ def read_snapshot(state: SharedRedLightViolationState) -> RedLightViolationSnaps
             .copy()
         )
         track_ids = np.frombuffer(state.track_ids, dtype=np.int32)[:count].copy()
+        box_states = np.frombuffer(state.box_states, dtype=np.int8)[:count].copy()
         lengths = np.frombuffer(state.geometry_lengths, dtype=np.int32).copy()
         point_count = int(state.geometry_point_count.value)
         points = (
@@ -175,18 +186,18 @@ def read_snapshot(state: SharedRedLightViolationState) -> RedLightViolationSnaps
                 offset += int(length)
             geometry = ResolvedGeometry(
                 roi=parts[0],
-                line_1=parts[1],
-                line_2=parts[2],
+                stop_line=parts[1],
+                confirmation_line=parts[2],
                 transition=parts[3],
+                exit_zones=(),
             )
         return RedLightViolationSnapshot(
             boxes=boxes,
             velocities=velocities,
             track_ids=track_ids,
+            box_states=box_states,
             geometry=geometry,
-            in_count=int(state.in_count.value),
-            out_count=int(state.out_count.value),
+            violation_count=int(state.violation_count.value),
             source_sequence=int(state.source_sequence.value),
             timestamp=float(state.timestamp.value),
         )
-

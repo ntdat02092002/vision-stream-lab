@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from enum import IntEnum
+
 import cv2
 import numpy as np
 
 from .config import RedLightViolationConfig, RenderingConfig
 from .spatial import ResolvedGeometry, resolve_camera_geometry
+
+
+class BoxRenderState(IntEnum):
+    NORMAL = 0
+    TRACKING = 1
+    VIOLATION = 2
 
 
 def _contour(points: np.ndarray, frame_shape: tuple[int, ...]) -> np.ndarray:
@@ -15,18 +23,18 @@ def _contour(points: np.ndarray, frame_shape: tuple[int, ...]) -> np.ndarray:
     return result.reshape(-1, 1, 2)
 
 
-def _draw_count_hud(image: np.ndarray, in_count: int, out_count: int) -> None:
+def _draw_violation_hud(image: np.ndarray, violation_count: int) -> None:
     height, width = image.shape[:2]
     panel_width = min(268, width - 12)
     x1, x2 = width - panel_width - 12, width - 12
-    y1, y2 = 12, min(92, height - 1)
+    y1, y2 = 12, min(62, height - 1)
 
     overlay = image.copy()
     cv2.rectangle(overlay, (x1, y1), (x2, y2), (10, 15, 22), -1)
     image[:] = cv2.addWeighted(overlay, 0.78, image, 0.22, 0)
     cv2.putText(
         image,
-        f"IN {in_count}   OUT {out_count}",
+        f"VIOLATIONS {violation_count}",
         (x1 + 12, 46),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.72,
@@ -34,25 +42,23 @@ def _draw_count_hud(image: np.ndarray, in_count: int, out_count: int) -> None:
         2,
         cv2.LINE_AA,
     )
-    cv2.putText(
-        image,
-        f"TOTAL {in_count + out_count}",
-        (x1 + 12, 78),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (0, 220, 255),
-        2,
-        cv2.LINE_AA,
-    )
+
+
+def _box_style(state: int, config: RenderingConfig) -> tuple[tuple[int, int, int], str]:
+    if state == BoxRenderState.VIOLATION:
+        return config.violation_box_color, "VIOLATION"
+    if state == BoxRenderState.TRACKING:
+        return config.tracking_box_color, "TRACKING"
+    return config.box_color, "VEHICLE"
 
 
 def annotate_frame(
     image: np.ndarray,
     boxes: np.ndarray,
     track_ids: np.ndarray,
+    box_states: np.ndarray,
     geometry: ResolvedGeometry | None,
-    in_count: int,
-    out_count: int,
+    violation_count: int,
     config: RenderingConfig,
     *,
     static_only: bool = False,
@@ -79,8 +85,12 @@ def annotate_frame(
             )
         if config.show_gate:
             for line, color, label in (
-                (geometry.line_1, config.line_1_color, "LINE 1"),
-                (geometry.line_2, config.line_2_color, "LINE 2"),
+                (geometry.stop_line, config.stop_line_color, "STOP LINE"),
+                (
+                    geometry.confirmation_line,
+                    config.confirmation_line_color,
+                    "CONFIRM LINE",
+                ),
             ):
                 points = np.rint(line).astype(int)
                 cv2.line(
@@ -104,22 +114,27 @@ def annotate_frame(
     if static_only:
         return output
     if config.show_boxes:
-        for box, track_id in zip(np.asarray(boxes).reshape(-1, 6), track_ids):
+        values = np.asarray(boxes).reshape(-1, 6)
+        statuses = np.asarray(box_states, dtype=np.int8).reshape(-1)
+        if len(values) != len(track_ids) or len(values) != len(statuses):
+            raise ValueError("Boxes, track IDs, and render states must have equal length")
+        for box, track_id, status in zip(values, track_ids, statuses):
             x1, y1, x2, y2, _class_id, confidence = box
             p1, p2 = (int(x1), int(y1)), (int(x2), int(y2))
-            cv2.rectangle(output, p1, p2, config.box_color, config.thickness)
+            color, label = _box_style(int(status), config)
+            cv2.rectangle(output, p1, p2, color, config.thickness)
             cv2.putText(
                 output,
-                f"car #{int(track_id)} {confidence:.2f}",
+                f"{label} #{int(track_id)} {confidence:.2f}",
                 (p1[0], max(20, p1[1] - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
-                config.box_color,
+                color,
                 2,
                 cv2.LINE_AA,
             )
     if config.show_counts:
-        _draw_count_hud(output, in_count, out_count)
+        _draw_violation_hud(output, violation_count)
     return output
 
 
@@ -160,8 +175,8 @@ def render_latest(
             image,
             np.empty((0, 6), dtype=np.float32),
             np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.int8),
             snapshot.geometry,
-            0,
             0,
             config.rendering,
             static_only=True,
@@ -178,9 +193,9 @@ def render_latest(
         image,
         boxes,
         snapshot.track_ids[valid],
+        snapshot.box_states[valid],
         snapshot.geometry,
-        snapshot.in_count,
-        snapshot.out_count,
+        snapshot.violation_count,
         config.rendering,
     )
 
@@ -195,8 +210,8 @@ def render_static_overlay(
         image,
         np.empty((0, 6), dtype=np.float32),
         np.empty(0, dtype=np.int32),
+        np.empty(0, dtype=np.int8),
         geometry,
-        0,
         0,
         config.rendering,
         static_only=True,

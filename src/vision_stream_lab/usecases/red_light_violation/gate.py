@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 
@@ -11,35 +12,65 @@ from .spatial import ResolvedGeometry, point_in_polygon
 @dataclass(frozen=True)
 class GateEvent:
     track_id: int
-    direction: str
+    stage: GateStage
     timestamp: float
+    movement: str | None = None
+
+
+class GateStage(StrEnum):
+    STOP_LINE_CROSSED = "stop_line_crossed"
+    EXIT_REACHED = "exit_reached"
+
+
+class ViolationPhase(StrEnum):
+    APPROACHING = "approaching"
+    PENDING_CONFIRMATION = "pending_confirmation"
+    WAITING_FOR_MOVEMENT = "waiting_for_movement"
+    RESOLVED = "resolved"
 
 
 @dataclass
-class TrackGateState:
-    phase: str = "idle"
-    armed_at: float = 0.0
-    armed_sequence: int = -1
-    transition_seen: bool = False
-    counted_directions: set[str] = field(default_factory=set)
+class ViolationTrackState:
+    phase: ViolationPhase = ViolationPhase.APPROACHING
     last_seen: float = 0.0
-    line_1_side: int = 0
-    line_2_side: int = 0
-    line_1_anchor: np.ndarray | None = None
-    line_2_anchor: np.ndarray | None = None
+
+    # Double line gate state algorithsm
+    stop_line_side: int = 0
+    confirmation_line_side: int = 0
+    stop_line_anchor: np.ndarray | None = None
+    confirmation_line_anchor: np.ndarray | None = None
+
+    stop_line_crossed_at: float = 0.0
+    stop_line_crossed_sequence: int = -1
+    transition_seen: bool = False
+
+    # States for checking light color and exit movement
+    light_at_crossing: str | None = None
+    vehicle_class_id: int | None = None
+
+    movement: str | None = None
+    matched_exit_id: str | None = None
+
+    decision: str | None = None
+    violation_emitted: bool = False
 
     def reset_phase(self) -> None:
-        self.phase = "idle"
-        self.armed_at = 0.0
-        self.armed_sequence = -1
+        self.phase = ViolationPhase.APPROACHING
+        self.stop_line_crossed_at = 0.0
+        self.stop_line_crossed_sequence = -1
         self.transition_seen = False
+        self.light_at_crossing = None
+        self.vehicle_class_id = None
+        self.movement = None
+        self.matched_exit_id = None
+        self.decision = None
+        self.violation_emitted = False
 
 
 @dataclass
-class CameraGateState:
-    tracks: dict[int, TrackGateState] = field(default_factory=dict)
-    in_count: int = 0
-    out_count: int = 0
+class CameraViolationState:
+    tracks: dict[int, ViolationTrackState] = field(default_factory=dict)
+    violation_count: int = 0
 
     def cleanup(self, timestamp: float, stale_seconds: float) -> None:
         self.tracks = {
@@ -95,105 +126,100 @@ def _stable_crossing(
     return crossed, current_side, current_anchor.copy()
 
 
-class DoubleLineGate:
+class ViolationCheckingGate:
     def __init__(self, lifecycle: LifecycleConfig):
         self.lifecycle = lifecycle
 
     def update(
         self,
-        camera_state: CameraGateState,
+        camera_state: CameraViolationState,
         track_id: int,
         anchor: np.ndarray,
+        movement: str | None,
+        vehicle_class_id: int,
         timestamp: float,
         sequence: int,
         geometry: ResolvedGeometry,
     ) -> GateEvent | None:
-        state = camera_state.tracks.setdefault(track_id, TrackGateState())
+        state = camera_state.tracks.setdefault(track_id, ViolationTrackState())
         state.last_seen = timestamp
-        crossed_1, state.line_1_side, state.line_1_anchor = _stable_crossing(
-            state.line_1_side,
-            state.line_1_anchor,
+        crossed_stop, state.stop_line_side, state.stop_line_anchor = _stable_crossing(
+            state.stop_line_side,
+            state.stop_line_anchor,
             anchor,
-            geometry.line_1,
+            geometry.stop_line,
             self.lifecycle.crossing_hysteresis_px,
         )
-        crossed_2, state.line_2_side, state.line_2_anchor = _stable_crossing(
-            state.line_2_side,
-            state.line_2_anchor,
+        (
+            crossed_confirmation,
+            state.confirmation_line_side,
+            state.confirmation_line_anchor,
+        ) = _stable_crossing(
+            state.confirmation_line_side,
+            state.confirmation_line_anchor,
             anchor,
-            geometry.line_2,
+            geometry.confirmation_line,
             self.lifecycle.crossing_hysteresis_px,
         )
         inside_transition = point_in_polygon(anchor, geometry.transition)
 
-        if state.phase != "idle" and timestamp - state.armed_at > self.lifecycle.max_transition_seconds:
+        if (
+            state.phase is ViolationPhase.PENDING_CONFIRMATION
+            and timestamp - state.stop_line_crossed_at
+            > self.lifecycle.max_transition_seconds
+        ):
             state.reset_phase()
 
-        if state.phase == "idle":
-            if crossed_1 and not crossed_2 and inside_transition:
-                state.phase = "armed_1_to_2"
-                state.armed_at = timestamp
-                state.armed_sequence = sequence
-            elif crossed_2 and not crossed_1 and inside_transition:
-                state.phase = "armed_2_to_1"
-                state.armed_at = timestamp
-                state.armed_sequence = sequence
+        if state.phase is ViolationPhase.APPROACHING:
+            if crossed_stop and not crossed_confirmation and inside_transition:
+                state.phase = ViolationPhase.PENDING_CONFIRMATION
+                state.stop_line_crossed_at = timestamp
+                state.stop_line_crossed_sequence = sequence
+                state.vehicle_class_id = vehicle_class_id
+                return GateEvent(
+                    track_id=track_id,
+                    stage=GateStage.STOP_LINE_CROSSED,
+                    timestamp=timestamp,
+                )
             return None
 
-        if state.phase == "armed_1_to_2":
-            if crossed_1 and not inside_transition:
+        if state.phase is ViolationPhase.PENDING_CONFIRMATION:
+            if crossed_stop and not inside_transition:
                 state.reset_phase()
                 return None
-            if sequence > state.armed_sequence and inside_transition:
+            if sequence > state.stop_line_crossed_sequence and inside_transition:
                 state.transition_seen = True
-            if crossed_2:
-                event = self._complete(
-                    camera_state,
-                    state,
-                    track_id,
-                    "line_1_to_line_2",
-                    geometry.in_direction,
-                    timestamp,
-                )
-                state.reset_phase()
-                return event
+            if crossed_confirmation:
+                self._complete(state)
             return None
 
-        if crossed_2 and not inside_transition:
-            state.reset_phase()
-            return None
-        if sequence > state.armed_sequence and inside_transition:
-            state.transition_seen = True
-        if crossed_1:
-            event = self._complete(
-                camera_state,
-                state,
-                track_id,
-                "line_2_to_line_1",
-                geometry.in_direction,
-                timestamp,
+        if state.phase is ViolationPhase.WAITING_FOR_MOVEMENT and movement is not None:
+            state.phase = ViolationPhase.RESOLVED
+            state.movement = movement
+            return GateEvent(
+                track_id=track_id,
+                stage=GateStage.EXIT_REACHED,
+                timestamp=timestamp,
+                movement=movement,
             )
-            state.reset_phase()
-            return event
         return None
 
-    @staticmethod
-    def _complete(
-        camera_state: CameraGateState,
-        state: TrackGateState,
+    def record_light_at_crossing(
+        self,
+        camera_state: CameraViolationState,
         track_id: int,
-        travel_direction: str,
-        in_direction: str,
-        timestamp: float,
-    ) -> GateEvent | None:
+        light_state: str,
+    ) -> None:
+        state = camera_state.tracks.get(track_id)
+        if state is None:
+            return
+
+        state.light_at_crossing = light_state
+
+    @staticmethod
+    def _complete(state: ViolationTrackState) -> bool:
         if not state.transition_seen:
-            return None
-        direction = "in" if travel_direction == in_direction else "out"
-        if direction in state.counted_directions:
-            return None
-        state.counted_directions.add(direction)
-        if direction == "in":
-            camera_state.in_count += 1
-        else:
-            camera_state.out_count += 1
-        return GateEvent(track_id=track_id, direction=direction, timestamp=timestamp)
+            state.reset_phase()
+            return False
+        state.phase = ViolationPhase.WAITING_FOR_MOVEMENT
+        return True

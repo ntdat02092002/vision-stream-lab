@@ -30,8 +30,9 @@ rendering:
   show_counts: true
   roi_color: [255, 255, 0]
   transition_color: [0, 180, 180]
-  line_1_color: [0, 255, 0]
-  line_2_color: [0, 0, 255]
+  stop_line_color: [0, 0, 255]
+  confirmation_line_color: [0, 255, 255]
   box_color: [40, 220, 40]
+  tracking_box_color: [0, 255, 255]
+  violation_box_color: [0, 0, 255]
   thickness: 2
-

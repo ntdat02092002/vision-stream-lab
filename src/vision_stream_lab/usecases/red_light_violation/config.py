@@ -12,6 +12,7 @@ from ...inference.detection.yolo.config import UltralyticsYoloConfig
 
 Point = tuple[float, float]
 Line = tuple[Point, Point]
+Polygon = tuple[Point, ...]
 
 
 @dataclass(frozen=True)
@@ -26,13 +27,26 @@ class ByteTrackConfig:
 
 
 @dataclass(frozen=True)
-class CameraSpatialConfig:
-    roi: tuple[Point, ...]
-    line_1: Line
-    line_2: Line
-    transition: tuple[Point, ...]
-    in_direction: str = "line_1_to_line_2"
+class ExitZoneConfig:
+    id: str
+    polygon: Polygon
 
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    enforced_light_states: tuple[str, ...] = ("red",)
+    allowed: dict[str, tuple[int | str, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CameraSpatialConfig:
+    roi: Polygon
+    stop_line: Line
+    confirmation_line: Line
+    transition: Polygon
+    exit_zones: dict[str, tuple[ExitZoneConfig, ...]]
+    policy: PolicyConfig
+    crossing_direction: str = "stop_to_confirmation"
 
 @dataclass(frozen=True)
 class SpatialConfig:
@@ -58,9 +72,11 @@ class RenderingConfig:
     show_counts: bool = True
     roi_color: tuple[int, int, int] = (255, 255, 0)
     transition_color: tuple[int, int, int] = (0, 180, 180)
-    line_1_color: tuple[int, int, int] = (0, 255, 0)
-    line_2_color: tuple[int, int, int] = (0, 0, 255)
+    stop_line_color: tuple[int, int, int] = (0, 0, 255)
+    confirmation_line_color: tuple[int, int, int] = (0, 255, 255)
     box_color: tuple[int, int, int] = (40, 220, 40)
+    tracking_box_color: tuple[int, int, int] = (0, 255, 255)
+    violation_box_color: tuple[int, int, int] = (0, 0, 255)
     thickness: int = 2
 
 
@@ -205,6 +221,38 @@ def _validate_coordinates(
         raise ValueError(f"{path} exceeds spatial.reference_size")
 
 
+def _parse_exit_zones(raw: Any, path: str) -> dict[str, tuple[ExitZoneConfig, ...]]:
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise TypeError(f"{path} must be a non-empty list")
+
+    exit_ids: set[str] = set()
+    grouped: dict[str, list[ExitZoneConfig]] = {}
+    for index, item in enumerate(raw):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, Mapping):
+            raise TypeError(f"{item_path} must be a mapping")
+        _unknown(item, {"id", "movement", "polygon"}, item_path)
+
+        exit_id = str(item.get("id", "")).strip()
+        movement = str(item.get("movement", "")).strip()
+        if not exit_id:
+            raise ValueError(f"{item_path}.id must not be empty")
+        if exit_id in exit_ids:
+            raise ValueError(f"{path} contains duplicate id {exit_id!r}")
+        if not movement:
+            raise ValueError(f"{item_path}.movement must not be empty")
+
+        exit_ids.add(exit_id)
+        grouped.setdefault(movement, []).append(
+            ExitZoneConfig(
+                id=exit_id,
+                polygon=_polygon(item.get("polygon"), f"{item_path}.polygon"),
+            )
+        )
+
+    return {movement: tuple(polygons) for movement, polygons in grouped.items()}
+
+
 def _parse_spatial(raw: Mapping[str, Any] | None) -> SpatialConfig:
     if raw is None:
         return SpatialConfig()
@@ -238,29 +286,66 @@ def _parse_spatial(raw: Mapping[str, Any] | None) -> SpatialConfig:
         if not isinstance(camera_raw, Mapping):
             raise TypeError(f"spatial.cameras.{normalized_id} must be a mapping")
         path = f"spatial.cameras.{normalized_id}"
-        _unknown(camera_raw, {"roi", "line_1", "line_2", "transition", "in_direction"}, path)
+        _unknown(
+            camera_raw,
+            {
+                "roi",
+                "stop_line",
+                "confirmation_line",
+                "crossing_direction",
+                "exits",
+                "policy",
+            },
+            path,
+        )
         roi = _polygon(camera_raw.get("roi"), f"{path}.roi")
-        line_1 = _line(camera_raw.get("line_1"), f"{path}.line_1")
-        line_2 = _line(camera_raw.get("line_2"), f"{path}.line_2")
-        transition = _polygon(camera_raw.get("transition"), f"{path}.transition")
-        in_direction = str(camera_raw.get("in_direction", "line_1_to_line_2"))
-        if in_direction not in {"line_1_to_line_2", "line_2_to_line_1"}:
+        stop_line = _line(camera_raw.get("stop_line"), f"{path}.stop_line")
+        confirmation_line = _line(
+            camera_raw.get("confirmation_line"),
+            f"{path}.confirmation_line",
+        )
+        transition = _polygon(
+            (
+                stop_line[0],
+                stop_line[1],
+                confirmation_line[1],
+                confirmation_line[0],
+            ),
+            f"{path}.transition",
+        )
+        crossing_direction = str(
+            camera_raw.get("crossing_direction", "stop_to_confirmation")
+        )
+        if crossing_direction != "stop_to_confirmation":
             raise ValueError(
-                f"{path}.in_direction must be 'line_1_to_line_2' or 'line_2_to_line_1'"
+                f"{path}.crossing_direction must be 'stop_to_confirmation'"
             )
+        exit_zones = _parse_exit_zones(camera_raw.get("exits"), f"{path}.exits")
+        policy = _parse_policy(camera_raw.get("policy"), f"{path}.policy")
+        _validate_policy_movements(exit_zones, policy, path)
         for name, points in (
             ("roi", roi),
-            ("line_1", line_1),
-            ("line_2", line_2),
+            ("stop_line", stop_line),
+            ("confirmation_line", confirmation_line),
             ("transition", transition),
         ):
             _validate_coordinates(points, coordinate_space, reference_size, f"{path}.{name}")
+        for movement, zones in exit_zones.items():
+            for index, zone in enumerate(zones):
+                _validate_coordinates(
+                    zone.polygon,
+                    coordinate_space,
+                    reference_size,
+                    f"{path}.exit_zones.{movement}[{index}]",
+                )
         cameras[normalized_id] = CameraSpatialConfig(
             roi=roi,
-            line_1=line_1,
-            line_2=line_2,
+            stop_line=stop_line,
+            confirmation_line=confirmation_line,
             transition=transition,
-            in_direction=in_direction,
+            exit_zones=exit_zones,
+            policy=policy,
+            crossing_direction=crossing_direction,
         )
     return SpatialConfig(
         coordinate_space=coordinate_space,
@@ -290,6 +375,67 @@ def _parse_lifecycle(raw: Mapping[str, Any] | None) -> LifecycleConfig:
     )
 
 
+def _parse_policy(raw: Any, path: str) -> PolicyConfig:
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"{path} must be a mapping")
+    _unknown(raw, {"enforced_light_states", "allowed"}, path)
+
+    light_states_raw = raw.get("enforced_light_states", ["red"])
+    if not isinstance(light_states_raw, (list, tuple)) or not light_states_raw:
+        raise TypeError(f"{path}.enforced_light_states must be a non-empty list")
+    light_states = tuple(str(value).strip().lower() for value in light_states_raw)
+    if any(not value for value in light_states):
+        raise ValueError(f"{path}.enforced_light_states must not contain empty values")
+    if len(set(light_states)) != len(light_states):
+        raise ValueError(f"{path}.enforced_light_states must not contain duplicates")
+
+    allowed_raw = raw.get("allowed", {})
+    if not isinstance(allowed_raw, Mapping):
+        raise TypeError(f"{path}.allowed must be a movement mapping")
+    allowed: dict[str, tuple[int | str, ...]] = {}
+    for movement_raw, class_ids_raw in allowed_raw.items():
+        movement = str(movement_raw).strip()
+        movement_path = f"{path}.allowed.{movement}"
+        if not movement:
+            raise ValueError(f"{path}.allowed movement names must not be empty")
+        if not isinstance(class_ids_raw, (list, tuple)):
+            raise TypeError(f"{movement_path} must be a list of class IDs or '*'")
+
+        class_ids: list[int | str] = []
+        for value in class_ids_raw:
+            if value == "*" or (
+                isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            ):
+                class_ids.append(value)
+            else:
+                raise TypeError(
+                    f"{movement_path} entries must be non-negative class IDs or '*'"
+                )
+        if len(set(class_ids)) != len(class_ids):
+            raise ValueError(f"{movement_path} must not contain duplicates")
+        allowed[movement] = tuple(class_ids)
+
+    return PolicyConfig(enforced_light_states=light_states, allowed=allowed)
+
+
+def _validate_policy_movements(
+    exit_zones: Mapping[str, tuple[ExitZoneConfig, ...]],
+    policy: PolicyConfig,
+    camera_path: str,
+) -> None:
+    policy_movements = set(policy.allowed)
+    exit_movements = set(exit_zones)
+    if policy_movements == exit_movements:
+        return
+    missing_policy = sorted(exit_movements - policy_movements)
+    missing_exit_zones = sorted(policy_movements - exit_movements)
+    raise ValueError(
+        f"{camera_path}.policy.allowed keys must match "
+        f"{camera_path}.exit_zones keys; missing in policy: {missing_policy}, "
+        f"missing in exit_zones: {missing_exit_zones}"
+    )
+
+
 def _parse_rendering(raw: Mapping[str, Any] | None) -> RenderingConfig:
     if raw is None:
         return RenderingConfig()
@@ -305,9 +451,11 @@ def _parse_rendering(raw: Mapping[str, Any] | None) -> RenderingConfig:
     for name in (
         "roi_color",
         "transition_color",
-        "line_1_color",
-        "line_2_color",
+        "stop_line_color",
+        "confirmation_line_color",
         "box_color",
+        "tracking_box_color",
+        "violation_box_color",
     ):
         values[name] = _color(raw.get(name, getattr(defaults, name)), f"rendering.{name}")
     values["thickness"] = _positive_int(raw.get("thickness", 2), "rendering.thickness")
@@ -315,7 +463,11 @@ def _parse_rendering(raw: Mapping[str, Any] | None) -> RenderingConfig:
 
 
 def parse_red_light_violation_config(raw: Mapping[str, Any]) -> RedLightViolationConfig:
-    _unknown(raw, {"inference", "tracker", "spatial", "lifecycle", "rendering"}, "config")
+    _unknown(
+        raw,
+        {"inference", "tracker", "spatial", "lifecycle", "rendering"},
+        "config",
+    )
     inference_raw = raw.get("inference")
     inference = (
         UltralyticsYoloConfig()
@@ -326,10 +478,11 @@ def parse_red_light_violation_config(raw: Mapping[str, Any]) -> RedLightViolatio
         value = raw.get(name)
         if value is not None and not isinstance(value, Mapping):
             raise TypeError(f"red_light_violation {name} config must be a mapping")
+    spatial = _parse_spatial(raw.get("spatial"))
     return RedLightViolationConfig(
         inference=inference,
         tracker=_parse_tracker(raw.get("tracker")),
-        spatial=_parse_spatial(raw.get("spatial")),
+        spatial=spatial,
         lifecycle=_parse_lifecycle(raw.get("lifecycle")),
         rendering=_parse_rendering(raw.get("rendering")),
     )

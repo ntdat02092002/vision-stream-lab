@@ -10,31 +10,67 @@ from ...inference.detection import create_detection_backend
 from ...schema.use_case import FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import RedLightViolationConfig
-from .gate import CameraGateState, DoubleLineGate
-from .rendering import annotate_frame
-from .spatial import detection_anchors, filter_detections_by_roi, resolve_camera_geometry
+from .gate import (
+    CameraViolationState,
+    GateStage,
+    ViolationCheckingGate,
+    ViolationPhase,
+)
+from .movement import resolve_detection_movements
+from .rendering import BoxRenderState, annotate_frame
+from .rules import RuleContext, RuleDecision, RuleEngine
+from .spatial import (
+    detection_anchors,
+    filter_detections_by_roi,
+    resolve_camera_geometry,
+)
 from .tracker import ByteTrackAdapter
+from .traffic_light import TrafficLightClassifier
 
 
 @dataclass
 class CameraRuntime:
     tracker: ByteTrackAdapter
-    gate_state: CameraGateState
+    violation_state: CameraViolationState
+    rule_engine: RuleEngine | None
+
+
+def _resolve_box_states(
+    track_ids: np.ndarray,
+    camera_state: CameraViolationState,
+) -> np.ndarray:
+    statuses = []
+    for track_id in track_ids:
+        state = camera_state.tracks.get(int(track_id))
+        if state is None or state.phase is ViolationPhase.APPROACHING:
+            statuses.append(BoxRenderState.NORMAL)
+        elif state.decision == RuleDecision.VIOLATION:
+            statuses.append(BoxRenderState.VIOLATION)
+        elif state.decision == RuleDecision.ALLOWED:
+            statuses.append(BoxRenderState.NORMAL)
+        else:
+            statuses.append(BoxRenderState.TRACKING)
+    return np.asarray(statuses, dtype=np.int8)
 
 
 class RedLightViolationPipeline(UseCasePipeline):
     def __init__(self, config: RedLightViolationConfig, project_root: Path):
         self.config = config
         self.detector = create_detection_backend(config.inference, project_root)
-        self.gate = DoubleLineGate(config.lifecycle)
+        self.gate = ViolationCheckingGate(config.lifecycle)
         self.cameras: dict[str, CameraRuntime] = {}
+        self.traffic_light_classifier = TrafficLightClassifier()
 
     def _camera_runtime(self, camera_id: str) -> CameraRuntime:
         runtime = self.cameras.get(camera_id)
         if runtime is None:
+            camera_config = self.config.spatial.cameras.get(camera_id)
             runtime = CameraRuntime(
                 tracker=ByteTrackAdapter(self.config.tracker),
-                gate_state=CameraGateState(),
+                violation_state=CameraViolationState(),
+                rule_engine=(
+                    None if camera_config is None else RuleEngine(camera_config.policy)
+                ),
             )
             self.cameras[camera_id] = runtime
         return runtime
@@ -66,45 +102,103 @@ class RedLightViolationPipeline(UseCasePipeline):
                     self.config.spatial.anchor,
                 )
             tracked = runtime.tracker.update(visible, context.timestamp)
-            events = []
+            violation_events: list[dict[str, object]] = []
+            cached_light_state: str | None = None
             if geometry is not None:
                 anchors = detection_anchors(tracked.boxes, self.config.spatial.anchor)
-                for track_id, anchor in zip(tracked.track_ids, anchors):
+                movements = resolve_detection_movements(
+                    tracked.boxes,
+                    geometry,
+                    self.config.spatial.anchor,
+                )
+                for track_id, box, anchor, movement in zip(
+                    tracked.track_ids,
+                    tracked.boxes,
+                    anchors,
+                    movements,
+                ):
                     event = self.gate.update(
-                        runtime.gate_state,
+                        runtime.violation_state,
                         int(track_id),
                         anchor,
+                        movement,
+                        int(box[4]),
                         context.timestamp,
                         context.sequence,
                         geometry,
                     )
                     if event is not None:
-                        events.append((event.track_id, event.direction))
-            runtime.gate_state.cleanup(
+                        if event.stage is GateStage.STOP_LINE_CROSSED:
+                            if cached_light_state is None:
+                                cached_light_state = self.traffic_light_classifier.classify(
+                                    image,
+                                    geometry,
+                                )
+
+                            self.gate.record_light_at_crossing(
+                                runtime.violation_state,
+                                event.track_id,
+                                cached_light_state,
+                            )
+                        elif event.stage is GateStage.EXIT_REACHED:
+                            track_state = runtime.violation_state.tracks[event.track_id]
+                            if (
+                                runtime.rule_engine is not None
+                                and track_state.vehicle_class_id is not None
+                                and track_state.movement is not None
+                                and track_state.light_at_crossing is not None
+                            ):
+                                decision = runtime.rule_engine.evaluate(
+                                    RuleContext(
+                                        vehicle_class_id=track_state.vehicle_class_id,
+                                        movement=track_state.movement,
+                                        light_state=track_state.light_at_crossing,
+                                    )
+                                )
+                                track_state.decision = decision.value
+                                if (
+                                    decision is RuleDecision.VIOLATION
+                                    and not track_state.violation_emitted
+                                ):
+                                    track_state.violation_emitted = True
+                                    runtime.violation_state.violation_count += 1
+                                    violation_events.append(
+                                        {
+                                            "track_id": event.track_id,
+                                            "decision": decision.value,
+                                            "movement": track_state.movement,
+                                            "light_state": track_state.light_at_crossing,
+                                        }
+                                    )
+            runtime.violation_state.cleanup(
                 context.timestamp,
                 self.config.lifecycle.stale_track_seconds,
+            )
+            box_states = _resolve_box_states(
+                tracked.track_ids,
+                runtime.violation_state,
             )
             output = annotate_frame(
                 image,
                 tracked.boxes,
                 tracked.track_ids,
+                box_states,
                 geometry,
-                runtime.gate_state.in_count,
-                runtime.gate_state.out_count,
+                runtime.violation_state.violation_count,
                 self.config.rendering,
             )
             results.append(
                 UseCaseResult(
                     output_frame=output,
-                    event_count=len(events),
+                    event_count=len(violation_events),
                     metadata={
                         "detections": tracked.boxes,
                         "track_ids": tracked.track_ids,
                         "velocities": tracked.velocities,
+                        "box_states": box_states,
                         "geometry": geometry,
-                        "in_count": runtime.gate_state.in_count,
-                        "out_count": runtime.gate_state.out_count,
-                        "events": tuple(events),
+                        "violation_count": runtime.violation_state.violation_count,
+                        "events": tuple(violation_events),
                     },
                 )
             )

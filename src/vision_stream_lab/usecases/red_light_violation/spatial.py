@@ -9,12 +9,20 @@ from .config import SpatialConfig
 
 
 @dataclass(frozen=True)
+class ResolvedExitZone:
+    id: str
+    movement: str
+    polygon: np.ndarray
+
+
+@dataclass(frozen=True)
 class ResolvedGeometry:
     roi: np.ndarray
-    line_1: np.ndarray
-    line_2: np.ndarray
+    stop_line: np.ndarray
+    confirmation_line: np.ndarray
     transition: np.ndarray
-    in_direction: str = "line_1_to_line_2"
+    exit_zones: tuple[ResolvedExitZone, ...]
+    crossing_direction: str = "stop_to_confirmation"
 
 
 def _scale_points(
@@ -49,10 +57,37 @@ def resolve_camera_geometry(
         scale_x, scale_y = width / reference_width, height / reference_height
     return ResolvedGeometry(
         roi=_scale_points(definition.roi, scale_x, scale_y, width, height),
-        line_1=_scale_points(definition.line_1, scale_x, scale_y, width, height),
-        line_2=_scale_points(definition.line_2, scale_x, scale_y, width, height),
+        stop_line=_scale_points(
+            definition.stop_line,
+            scale_x,
+            scale_y,
+            width,
+            height,
+        ),
+        confirmation_line=_scale_points(
+            definition.confirmation_line,
+            scale_x,
+            scale_y,
+            width,
+            height,
+        ),
         transition=_scale_points(definition.transition, scale_x, scale_y, width, height),
-        in_direction=definition.in_direction,
+        exit_zones=tuple(
+            ResolvedExitZone(
+                id=zone.id,
+                movement=movement,
+                polygon=_scale_points(
+                    zone.polygon,
+                    scale_x,
+                    scale_y,
+                    width,
+                    height,
+                ),
+            )
+            for movement, zones in definition.exit_zones.items()
+            for zone in zones
+        ),
+        crossing_direction=definition.crossing_direction,
     )
 
 
@@ -82,4 +117,3 @@ def filter_detections_by_roi(
     anchors = detection_anchors(values, anchor)
     mask = np.asarray([point_in_polygon(point, roi) for point in anchors], dtype=bool)
     return values[mask], mask
-
