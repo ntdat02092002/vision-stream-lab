@@ -16,13 +16,21 @@ class ResolvedExitZone:
 
 
 @dataclass(frozen=True)
+class ResolvedTrafficLightGeometry:
+    roi: np.ndarray
+    bulb_positions: dict[str, tuple[float, float]]
+    bulb_radius: float
+    min_score: float
+    smoothing_window: int
+
+
+@dataclass(frozen=True)
 class ResolvedGeometry:
     roi: np.ndarray
+    approach_roi: np.ndarray
     stop_line: np.ndarray
-    confirmation_line: np.ndarray
-    transition: np.ndarray
     exit_zones: tuple[ResolvedExitZone, ...]
-    crossing_direction: str = "stop_to_confirmation"
+    traffic_light: ResolvedTrafficLightGeometry | None = None
 
 
 def _scale_points(
@@ -57,6 +65,13 @@ def resolve_camera_geometry(
         scale_x, scale_y = width / reference_width, height / reference_height
     return ResolvedGeometry(
         roi=_scale_points(definition.roi, scale_x, scale_y, width, height),
+        approach_roi=_scale_points(
+            definition.approach_roi,
+            scale_x,
+            scale_y,
+            width,
+            height,
+        ),
         stop_line=_scale_points(
             definition.stop_line,
             scale_x,
@@ -64,14 +79,6 @@ def resolve_camera_geometry(
             width,
             height,
         ),
-        confirmation_line=_scale_points(
-            definition.confirmation_line,
-            scale_x,
-            scale_y,
-            width,
-            height,
-        ),
-        transition=_scale_points(definition.transition, scale_x, scale_y, width, height),
         exit_zones=tuple(
             ResolvedExitZone(
                 id=zone.id,
@@ -87,7 +94,23 @@ def resolve_camera_geometry(
             for movement, zones in definition.exit_zones.items()
             for zone in zones
         ),
-        crossing_direction=definition.crossing_direction,
+        traffic_light=(
+            None
+            if definition.traffic_light is None
+            else ResolvedTrafficLightGeometry(
+                roi=_scale_points(
+                    definition.traffic_light.roi,
+                    scale_x,
+                    scale_y,
+                    width,
+                    height,
+                ),
+                bulb_positions=definition.traffic_light.bulb_positions,
+                bulb_radius=definition.traffic_light.bulb_radius,
+                min_score=definition.traffic_light.min_score,
+                smoothing_window=definition.traffic_light.smoothing_window,
+            )
+        ),
     )
 
 

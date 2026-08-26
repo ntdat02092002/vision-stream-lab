@@ -3,20 +3,27 @@ camera-01:
   source: demo_videos/20221003-102700.mp4
   loop: true
   max_fps: 0
-  enabled: true
+  enabled: false
 
 camera-02:
   name: ACC camera 07-52
   source: "demo_videos/ACC Export-2022-10-20 07.52.49.554 AM.avi"
   loop: true
   max_fps: 15
-  enabled: true
+  enabled: false
 
 camera-03:
   name: ACC camera 08-33
   source: "demo_videos/ACC Export-2022-10-20 08.33.57.228 AM.avi"
   loop: true
   max_fps: 15
+  enabled: false
+
+camera-04:
+  name: Ly Thuong Kiet - Hang Bai
+  source: "demo_videos/16h15.7.9.22.mp4"
+  loop: true
+  max_fps: 0
   enabled: true
 
 # camera-04:

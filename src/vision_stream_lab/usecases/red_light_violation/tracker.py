@@ -18,6 +18,7 @@ class ByteTrackAdapter:
     def __init__(self, config: ByteTrackConfig):
         import supervision as sv
         from trackers import ByteTrackTracker
+        from trackers.utils.iou import DIoU
         from trackers.utils.state_representations import XYXYStateEstimator
 
         self._sv = sv
@@ -29,15 +30,22 @@ class ByteTrackAdapter:
             minimum_consecutive_frames=config.minimum_consecutive_frames,
             minimum_iou_threshold=config.minimum_iou_threshold,
             state_estimator_class=XYXYStateEstimator,
+            iou=DIoU(),
         )
         self._history: dict[int, tuple[np.ndarray, float]] = {}
 
-    def update(self, detections: np.ndarray, timestamp: float) -> TrackedVehicles:
+    def update(
+        self,
+        detections: np.ndarray,
+        timestamp: float,
+    ) -> TrackedVehicles:
         values = np.asarray(detections, dtype=np.float32).reshape(-1, 6)
+        source_indices = np.arange(len(values), dtype=np.int32)
         sv_detections = self._sv.Detections(
             xyxy=values[:, :4],
             class_id=values[:, 4].astype(int),
             confidence=values[:, 5],
+            data={"source_index": source_indices},
         )
         tracked = self._tracker.update(sv_detections, timestamp=timestamp)
         track_ids = (
@@ -49,7 +57,12 @@ class ByteTrackAdapter:
         track_ids = track_ids[valid]
         xyxy = np.asarray(tracked.xyxy, dtype=np.float32)[valid]
         class_ids = np.asarray(tracked.class_id, dtype=np.int32)[valid]
-        confidences = np.asarray(tracked.confidence, dtype=np.float32)[valid]
+        tracked_source_indices = (
+            np.asarray(tracked.data["source_index"], dtype=np.int32)[valid]
+            if len(track_ids)
+            else np.empty(0, dtype=np.int32)
+        )
+        confidences = values[tracked_source_indices, 5]
         boxes = (
             np.column_stack((xyxy, class_ids, confidences)).astype(np.float32)
             if len(track_ids)
@@ -70,4 +83,3 @@ class ByteTrackAdapter:
             if timestamp - item[1] <= 5.0
         }
         return TrackedVehicles(boxes=boxes, track_ids=track_ids, velocities=velocities)
-

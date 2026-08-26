@@ -22,6 +22,7 @@ from .rules import RuleContext, RuleDecision, RuleEngine
 from .spatial import (
     detection_anchors,
     filter_detections_by_roi,
+    point_in_polygon,
     resolve_camera_geometry,
 )
 from .tracker import ByteTrackAdapter
@@ -33,6 +34,28 @@ class CameraRuntime:
     tracker: ByteTrackAdapter
     violation_state: CameraViolationState
     rule_engine: RuleEngine | None
+
+
+def _apply_rule_decision(
+    camera_state: CameraViolationState,
+    track_id: int,
+    decision: RuleDecision,
+) -> dict[str, object] | None:
+    """Persist a terminal decision and build an external violation event if needed."""
+    track_state = camera_state.tracks[track_id]
+    track_state.phase = ViolationPhase.RESOLVED
+    track_state.decision = decision.value
+    if decision is not RuleDecision.VIOLATION or track_state.violation_emitted:
+        return None
+
+    track_state.violation_emitted = True
+    camera_state.violation_count += 1
+    return {
+        "track_id": track_id,
+        "decision": decision.value,
+        "movement": track_state.movement,
+        "light_state": track_state.light_at_crossing,
+    }
 
 
 def _resolve_box_states(
@@ -94,6 +117,15 @@ class RedLightViolationPipeline(UseCasePipeline):
         for image, prediction, context in zip(images, predictions, contexts):
             geometry = resolve_camera_geometry(self.config.spatial, context.camera_id, image.shape)
             runtime = self._camera_runtime(context.camera_id)
+            current_light_state = (
+                "unknown"
+                if geometry is None
+                else self.traffic_light_classifier.classify(
+                    context.camera_id,
+                    image,
+                    geometry,
+                )
+            )
             visible = np.empty((0, 6), dtype=np.float32)
             if geometry is not None:
                 visible, _ = filter_detections_by_roi(
@@ -103,7 +135,6 @@ class RedLightViolationPipeline(UseCasePipeline):
                 )
             tracked = runtime.tracker.update(visible, context.timestamp)
             violation_events: list[dict[str, object]] = []
-            cached_light_state: str | None = None
             if geometry is not None:
                 anchors = detection_anchors(tracked.boxes, self.config.spatial.anchor)
                 movements = resolve_detection_movements(
@@ -117,6 +148,12 @@ class RedLightViolationPipeline(UseCasePipeline):
                     anchors,
                     movements,
                 ):
+                    track_state = runtime.violation_state.tracks.get(int(track_id))
+                    is_business_track = (
+                        track_state is not None and track_state.approach_seen
+                    ) or point_in_polygon(anchor, geometry.approach_roi)
+                    if not is_business_track:
+                        continue
                     event = self.gate.update(
                         runtime.violation_state,
                         int(track_id),
@@ -124,22 +161,33 @@ class RedLightViolationPipeline(UseCasePipeline):
                         movement,
                         int(box[4]),
                         context.timestamp,
-                        context.sequence,
                         geometry,
                     )
                     if event is not None:
                         if event.stage is GateStage.STOP_LINE_CROSSED:
-                            if cached_light_state is None:
-                                cached_light_state = self.traffic_light_classifier.classify(
-                                    image,
-                                    geometry,
-                                )
-
                             self.gate.record_light_at_crossing(
                                 runtime.violation_state,
                                 event.track_id,
-                                cached_light_state,
+                                current_light_state,
                             )
+                            track_state = runtime.violation_state.tracks[event.track_id]
+                            if (
+                                runtime.rule_engine is not None
+                                and track_state.vehicle_class_id is not None
+                                and track_state.light_at_crossing is not None
+                            ):
+                                decision = runtime.rule_engine.evaluate_at_crossing(
+                                    track_state.vehicle_class_id,
+                                    track_state.light_at_crossing,
+                                )
+                                if decision is not None:
+                                    violation_event = _apply_rule_decision(
+                                        runtime.violation_state,
+                                        event.track_id,
+                                        decision,
+                                    )
+                                    if violation_event is not None:
+                                        violation_events.append(violation_event)
                         elif event.stage is GateStage.EXIT_REACHED:
                             track_state = runtime.violation_state.tracks[event.track_id]
                             if (
@@ -155,48 +203,54 @@ class RedLightViolationPipeline(UseCasePipeline):
                                         light_state=track_state.light_at_crossing,
                                     )
                                 )
-                                track_state.decision = decision.value
-                                if (
-                                    decision is RuleDecision.VIOLATION
-                                    and not track_state.violation_emitted
-                                ):
-                                    track_state.violation_emitted = True
-                                    runtime.violation_state.violation_count += 1
-                                    violation_events.append(
-                                        {
-                                            "track_id": event.track_id,
-                                            "decision": decision.value,
-                                            "movement": track_state.movement,
-                                            "light_state": track_state.light_at_crossing,
-                                        }
-                                    )
+                                violation_event = _apply_rule_decision(
+                                    runtime.violation_state,
+                                    event.track_id,
+                                    decision,
+                                )
+                                if violation_event is not None:
+                                    violation_events.append(violation_event)
             runtime.violation_state.cleanup(
                 context.timestamp,
                 self.config.lifecycle.stale_track_seconds,
             )
+            business_mask = np.asarray(
+                [
+                    (state := runtime.violation_state.tracks.get(int(track_id)))
+                    is not None
+                    and state.approach_seen
+                    for track_id in tracked.track_ids
+                ],
+                dtype=bool,
+            )
+            business_boxes = tracked.boxes[business_mask]
+            business_track_ids = tracked.track_ids[business_mask]
+            business_velocities = tracked.velocities[business_mask]
             box_states = _resolve_box_states(
-                tracked.track_ids,
+                business_track_ids,
                 runtime.violation_state,
             )
             output = annotate_frame(
                 image,
-                tracked.boxes,
-                tracked.track_ids,
+                business_boxes,
+                business_track_ids,
                 box_states,
                 geometry,
                 runtime.violation_state.violation_count,
                 self.config.rendering,
+                current_light_state=current_light_state,
             )
             results.append(
                 UseCaseResult(
                     output_frame=output,
                     event_count=len(violation_events),
                     metadata={
-                        "detections": tracked.boxes,
-                        "track_ids": tracked.track_ids,
-                        "velocities": tracked.velocities,
+                        "detections": business_boxes,
+                        "track_ids": business_track_ids,
+                        "velocities": business_velocities,
                         "box_states": box_states,
                         "geometry": geometry,
+                        "current_light_state": current_light_state,
                         "violation_count": runtime.violation_state.violation_count,
                         "events": tuple(violation_events),
                     },

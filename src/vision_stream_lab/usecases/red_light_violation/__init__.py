@@ -1,2 +1,1 @@
-"""Red-light violation detection use case with ROI-filtered ByteTrack and double-line gates."""
-
+"""Red-light violation detection with tracked directional stop-line crossings."""

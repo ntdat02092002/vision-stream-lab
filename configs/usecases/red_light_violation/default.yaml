@@ -1,6 +1,6 @@
 # Camera-independent defaults for the red-light-violation plugin.
 inference:
-  $ref: inference/detection/yolo/yolo11n_pt.yaml
+  $ref: inference/detection/yolo/yolo12s_pt.yaml
 
 tracker:
   frame_rate: 6.0
@@ -8,6 +8,7 @@ tracker:
   track_activation_threshold: 0.35
   high_conf_det_threshold: 0.30
   minimum_consecutive_frames: 2
+  # ByteTrackAdapter uses DIoU similarity for fast-moving vehicles.
   minimum_iou_threshold: 0.10
   max_extrapolation_ms: 150
 
@@ -19,19 +20,19 @@ spatial:
 
 lifecycle:
   stale_track_seconds: 2.0
-  max_transition_seconds: 4.0
+  max_movement_seconds: 4.0
   crossing_hysteresis_px: 4.0
 
 rendering:
   show_roi: true
-  show_transition: true
+  show_approach_roi: true
   show_gate: true
   show_boxes: true
   show_counts: true
+  show_light_state: true
   roi_color: [255, 255, 0]
-  transition_color: [0, 180, 180]
+  approach_roi_color: [0, 180, 180]
   stop_line_color: [0, 0, 255]
-  confirmation_line_color: [0, 255, 255]
   box_color: [40, 220, 40]
   tracking_box_color: [0, 255, 255]
   violation_box_color: [0, 0, 255]

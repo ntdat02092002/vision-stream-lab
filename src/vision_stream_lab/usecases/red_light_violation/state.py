@@ -9,6 +9,9 @@ from ...schema.use_case import FrameContext, UseCaseResult
 from .config import RedLightViolationConfig
 from .spatial import ResolvedGeometry
 
+_LIGHT_STATE_TO_CODE = {"unknown": 0, "red": 1, "yellow": 2, "green": 3}
+_LIGHT_CODE_TO_STATE = {code: name for name, code in _LIGHT_STATE_TO_CODE.items()}
+
 
 @dataclass
 class SharedRedLightViolationState:
@@ -18,6 +21,7 @@ class SharedRedLightViolationState:
     box_states: Any
     count: Any
     violation_count: Any
+    light_state: Any
     source_sequence: Any
     timestamp: Any
     geometry_points: Any
@@ -36,6 +40,7 @@ class RedLightViolationSnapshot:
     box_states: np.ndarray
     geometry: ResolvedGeometry | None
     violation_count: int
+    current_light_state: str
     source_sequence: int
     timestamp: float
 
@@ -45,9 +50,8 @@ def create_shared_state(context: Any, config: RedLightViolationConfig) -> Shared
     geometry_capacity = max(
         (
             len(camera.roi)
+            + len(camera.approach_roi)
             + len(camera.stop_line)
-            + len(camera.confirmation_line)
-            + len(camera.transition)
             for camera in config.spatial.cameras.values()
         ),
         default=1,
@@ -59,10 +63,11 @@ def create_shared_state(context: Any, config: RedLightViolationConfig) -> Shared
         box_states=context.RawArray("b", capacity),
         count=context.Value("i", 0),
         violation_count=context.Value("Q", 0),
+        light_state=context.Value("b", _LIGHT_STATE_TO_CODE["unknown"]),
         source_sequence=context.Value("Q", 0),
         timestamp=context.Value("d", 0.0),
         geometry_points=context.RawArray("f", geometry_capacity * 2),
-        geometry_lengths=context.RawArray("i", 4),
+        geometry_lengths=context.RawArray("i", 3),
         geometry_point_count=context.Value("i", 0),
         lock=context.Lock(),
         capacity=capacity,
@@ -97,6 +102,7 @@ def publish_result(
         box_states,
         geometry,
         int(result.metadata.get("violation_count", 0)),
+        str(result.metadata.get("current_light_state", "unknown")),
         frame_context.sequence,
         frame_context.timestamp,
     )
@@ -110,6 +116,7 @@ def write_snapshot(
     box_states: np.ndarray,
     geometry: ResolvedGeometry | None,
     violation_count: int,
+    current_light_state: str,
     source_sequence: int,
     timestamp: float,
 ) -> None:
@@ -124,9 +131,8 @@ def write_snapshot(
     count = min(len(values), state.capacity)
     components = () if geometry is None else (
         geometry.roi,
+        geometry.approach_roi,
         geometry.stop_line,
-        geometry.confirmation_line,
-        geometry.transition,
     )
     point_count = sum(len(component) for component in components)
     if point_count > state.geometry_capacity:
@@ -154,6 +160,10 @@ def write_snapshot(
             offset += len(points)
         state.count.value = count
         state.violation_count.value = violation_count
+        state.light_state.value = _LIGHT_STATE_TO_CODE.get(
+            current_light_state.strip().lower(),
+            _LIGHT_STATE_TO_CODE["unknown"],
+        )
         state.source_sequence.value = source_sequence
         state.timestamp.value = timestamp
         state.geometry_point_count.value = point_count
@@ -186,9 +196,8 @@ def read_snapshot(state: SharedRedLightViolationState) -> RedLightViolationSnaps
                 offset += int(length)
             geometry = ResolvedGeometry(
                 roi=parts[0],
-                stop_line=parts[1],
-                confirmation_line=parts[2],
-                transition=parts[3],
+                approach_roi=parts[1],
+                stop_line=parts[2],
                 exit_zones=(),
             )
         return RedLightViolationSnapshot(
@@ -198,6 +207,10 @@ def read_snapshot(state: SharedRedLightViolationState) -> RedLightViolationSnaps
             box_states=box_states,
             geometry=geometry,
             violation_count=int(state.violation_count.value),
+            current_light_state=_LIGHT_CODE_TO_STATE.get(
+                int(state.light_state.value),
+                "unknown",
+            ),
             source_sequence=int(state.source_sequence.value),
             timestamp=float(state.timestamp.value),
         )

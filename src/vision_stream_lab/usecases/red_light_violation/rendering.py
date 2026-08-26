@@ -44,6 +44,39 @@ def _draw_violation_hud(image: np.ndarray, violation_count: int) -> None:
     )
 
 
+def _draw_light_hud(image: np.ndarray, light_state: str) -> None:
+    normalized = str(light_state).strip().lower()
+    color = {
+        "red": (0, 0, 255),
+        "yellow": (0, 255, 255),
+        "green": (0, 200, 0),
+    }.get(normalized, (140, 140, 140))
+    label = normalized.upper() if normalized in {"red", "yellow", "green"} else "UNKNOWN"
+
+    height, width = image.shape[:2]
+    panel_width = min(230, width - 12)
+    x1, x2 = 12, 12 + panel_width
+    y2 = height - 12
+    y1 = max(0, y2 - 50)
+
+    overlay = image.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (10, 15, 22), -1)
+    image[:] = cv2.addWeighted(overlay, 0.78, image, 0.22, 0)
+    center = (x1 + 25, y1 + 25)
+    cv2.circle(image, center, 10, color, -1, cv2.LINE_AA)
+    cv2.circle(image, center, 10, (235, 235, 235), 1, cv2.LINE_AA)
+    cv2.putText(
+        image,
+        f"LIGHT {label}",
+        (x1 + 45, y1 + 33),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.64,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
 def _box_style(state: int, config: RenderingConfig) -> tuple[tuple[int, int, int], str]:
     if state == BoxRenderState.VIOLATION:
         return config.violation_box_color, "VIOLATION"
@@ -62,15 +95,16 @@ def annotate_frame(
     config: RenderingConfig,
     *,
     static_only: bool = False,
+    current_light_state: str = "unknown",
 ) -> np.ndarray:
     output = image.copy()
     if geometry is not None:
-        if config.show_transition:
+        if config.show_approach_roi:
             overlay = output.copy()
             cv2.fillPoly(
                 overlay,
-                [_contour(geometry.transition, output.shape)],
-                config.transition_color,
+                [_contour(geometry.approach_roi, output.shape)],
+                config.approach_roi_color,
                 cv2.LINE_AA,
             )
             output = cv2.addWeighted(overlay, 0.16, output, 0.84, 0)
@@ -84,33 +118,25 @@ def annotate_frame(
                 cv2.LINE_AA,
             )
         if config.show_gate:
-            for line, color, label in (
-                (geometry.stop_line, config.stop_line_color, "STOP LINE"),
-                (
-                    geometry.confirmation_line,
-                    config.confirmation_line_color,
-                    "CONFIRM LINE",
-                ),
-            ):
-                points = np.rint(line).astype(int)
-                cv2.line(
-                    output,
-                    tuple(points[0]),
-                    tuple(points[1]),
-                    color,
-                    config.thickness + 1,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    output,
-                    label,
-                    (int(points[0, 0]), max(20, int(points[0, 1]) - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    color,
-                    2,
-                    cv2.LINE_AA,
-                )
+            points = np.rint(geometry.stop_line).astype(int)
+            cv2.line(
+                output,
+                tuple(points[0]),
+                tuple(points[1]),
+                config.stop_line_color,
+                config.thickness + 1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                output,
+                "STOP LINE",
+                (int(points[0, 0]), max(20, int(points[0, 1]) - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                config.stop_line_color,
+                2,
+                cv2.LINE_AA,
+            )
     if static_only:
         return output
     if config.show_boxes:
@@ -135,6 +161,8 @@ def annotate_frame(
             )
     if config.show_counts:
         _draw_violation_hud(output, violation_count)
+    if config.show_light_state:
+        _draw_light_hud(output, current_light_state)
     return output
 
 
@@ -197,6 +225,7 @@ def render_latest(
         snapshot.geometry,
         snapshot.violation_count,
         config.rendering,
+        current_light_state=snapshot.current_light_state,
     )
 
 

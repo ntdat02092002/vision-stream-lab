@@ -39,14 +39,22 @@ class PolicyConfig:
 
 
 @dataclass(frozen=True)
+class TrafficLightConfig:
+    roi: Polygon
+    bulb_positions: dict[str, Point]
+    bulb_radius: float = 0.12
+    min_score: float = 0.15
+    smoothing_window: int = 5
+
+
+@dataclass(frozen=True)
 class CameraSpatialConfig:
     roi: Polygon
+    approach_roi: Polygon
     stop_line: Line
-    confirmation_line: Line
-    transition: Polygon
     exit_zones: dict[str, tuple[ExitZoneConfig, ...]]
     policy: PolicyConfig
-    crossing_direction: str = "stop_to_confirmation"
+    traffic_light: TrafficLightConfig | None = None
 
 @dataclass(frozen=True)
 class SpatialConfig:
@@ -59,21 +67,21 @@ class SpatialConfig:
 @dataclass(frozen=True)
 class LifecycleConfig:
     stale_track_seconds: float = 2.0
-    max_transition_seconds: float = 4.0
+    max_movement_seconds: float = 4.0
     crossing_hysteresis_px: float = 4.0
 
 
 @dataclass(frozen=True)
 class RenderingConfig:
     show_roi: bool = True
-    show_transition: bool = True
+    show_approach_roi: bool = True
     show_gate: bool = True
     show_boxes: bool = True
     show_counts: bool = True
+    show_light_state: bool = True
     roi_color: tuple[int, int, int] = (255, 255, 0)
-    transition_color: tuple[int, int, int] = (0, 180, 180)
+    approach_roi_color: tuple[int, int, int] = (0, 180, 180)
     stop_line_color: tuple[int, int, int] = (0, 0, 255)
-    confirmation_line_color: tuple[int, int, int] = (0, 255, 255)
     box_color: tuple[int, int, int] = (40, 220, 40)
     tracking_box_color: tuple[int, int, int] = (0, 255, 255)
     violation_box_color: tuple[int, int, int] = (0, 0, 255)
@@ -253,6 +261,53 @@ def _parse_exit_zones(raw: Any, path: str) -> dict[str, tuple[ExitZoneConfig, ..
     return {movement: tuple(polygons) for movement, polygons in grouped.items()}
 
 
+def _parse_traffic_light(raw: Any, path: str) -> TrafficLightConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"{path} must be a mapping")
+    _unknown(
+        raw,
+        {"roi", "bulb_positions", "bulb_radius", "min_score", "smoothing_window"},
+        path,
+    )
+
+    positions_raw = raw.get("bulb_positions")
+    if not isinstance(positions_raw, Mapping):
+        raise TypeError(f"{path}.bulb_positions must be a mapping")
+    supported_states = {"red", "yellow", "green"}
+    configured_states = set(positions_raw)
+    if not configured_states or not configured_states <= supported_states:
+        raise ValueError(
+            f"{path}.bulb_positions keys must be a non-empty subset of "
+            f"{sorted(supported_states)}"
+        )
+    positions = {
+        state: _point(value, f"{path}.bulb_positions.{state}")
+        for state, value in positions_raw.items()
+    }
+    if any(not (0 <= x <= 1 and 0 <= y <= 1) for x, y in positions.values()):
+        raise ValueError(f"{path}.bulb_positions must stay within normalized [0, 1]")
+
+    bulb_radius = _positive_float(
+        raw.get("bulb_radius", 0.12),
+        f"{path}.bulb_radius",
+    )
+    if bulb_radius > 0.5:
+        raise ValueError(f"{path}.bulb_radius must be <= 0.5")
+
+    return TrafficLightConfig(
+        roi=_polygon(raw.get("roi"), f"{path}.roi"),
+        bulb_positions=positions,
+        bulb_radius=bulb_radius,
+        min_score=_probability(raw.get("min_score", 0.15), f"{path}.min_score"),
+        smoothing_window=_positive_int(
+            raw.get("smoothing_window", 5),
+            f"{path}.smoothing_window",
+        ),
+    )
+
+
 def _parse_spatial(raw: Mapping[str, Any] | None) -> SpatialConfig:
     if raw is None:
         return SpatialConfig()
@@ -290,44 +345,31 @@ def _parse_spatial(raw: Mapping[str, Any] | None) -> SpatialConfig:
             camera_raw,
             {
                 "roi",
+                "approach_roi",
                 "stop_line",
-                "confirmation_line",
-                "crossing_direction",
                 "exits",
                 "policy",
+                "traffic_light",
             },
             path,
         )
         roi = _polygon(camera_raw.get("roi"), f"{path}.roi")
+        approach_roi = _polygon(
+            camera_raw.get("approach_roi"),
+            f"{path}.approach_roi",
+        )
         stop_line = _line(camera_raw.get("stop_line"), f"{path}.stop_line")
-        confirmation_line = _line(
-            camera_raw.get("confirmation_line"),
-            f"{path}.confirmation_line",
-        )
-        transition = _polygon(
-            (
-                stop_line[0],
-                stop_line[1],
-                confirmation_line[1],
-                confirmation_line[0],
-            ),
-            f"{path}.transition",
-        )
-        crossing_direction = str(
-            camera_raw.get("crossing_direction", "stop_to_confirmation")
-        )
-        if crossing_direction != "stop_to_confirmation":
-            raise ValueError(
-                f"{path}.crossing_direction must be 'stop_to_confirmation'"
-            )
         exit_zones = _parse_exit_zones(camera_raw.get("exits"), f"{path}.exits")
         policy = _parse_policy(camera_raw.get("policy"), f"{path}.policy")
+        traffic_light = _parse_traffic_light(
+            camera_raw.get("traffic_light"),
+            f"{path}.traffic_light",
+        )
         _validate_policy_movements(exit_zones, policy, path)
         for name, points in (
             ("roi", roi),
+            ("approach_roi", approach_roi),
             ("stop_line", stop_line),
-            ("confirmation_line", confirmation_line),
-            ("transition", transition),
         ):
             _validate_coordinates(points, coordinate_space, reference_size, f"{path}.{name}")
         for movement, zones in exit_zones.items():
@@ -338,14 +380,20 @@ def _parse_spatial(raw: Mapping[str, Any] | None) -> SpatialConfig:
                     reference_size,
                     f"{path}.exit_zones.{movement}[{index}]",
                 )
+        if traffic_light is not None:
+            _validate_coordinates(
+                traffic_light.roi,
+                coordinate_space,
+                reference_size,
+                f"{path}.traffic_light.roi",
+            )
         cameras[normalized_id] = CameraSpatialConfig(
             roi=roi,
+            approach_roi=approach_roi,
             stop_line=stop_line,
-            confirmation_line=confirmation_line,
-            transition=transition,
             exit_zones=exit_zones,
             policy=policy,
-            crossing_direction=crossing_direction,
+            traffic_light=traffic_light,
         )
     return SpatialConfig(
         coordinate_space=coordinate_space,
@@ -363,9 +411,9 @@ def _parse_lifecycle(raw: Mapping[str, Any] | None) -> LifecycleConfig:
         stale_track_seconds=_positive_float(
             raw.get("stale_track_seconds", 2.0), "lifecycle.stale_track_seconds"
         ),
-        max_transition_seconds=_positive_float(
-            raw.get("max_transition_seconds", 4.0),
-            "lifecycle.max_transition_seconds",
+        max_movement_seconds=_positive_float(
+            raw.get("max_movement_seconds", 4.0),
+            "lifecycle.max_movement_seconds",
         ),
         crossing_hysteresis_px=_positive_float(
             raw.get("crossing_hysteresis_px", 4.0),
@@ -440,7 +488,14 @@ def _parse_rendering(raw: Mapping[str, Any] | None) -> RenderingConfig:
     if raw is None:
         return RenderingConfig()
     _unknown(raw, set(RenderingConfig.__dataclass_fields__), "rendering")
-    boolean_fields = {"show_roi", "show_transition", "show_gate", "show_boxes", "show_counts"}
+    boolean_fields = {
+        "show_roi",
+        "show_approach_roi",
+        "show_gate",
+        "show_boxes",
+        "show_counts",
+        "show_light_state",
+    }
     values: dict[str, Any] = {}
     defaults = RenderingConfig()
     for name in boolean_fields:
@@ -450,9 +505,8 @@ def _parse_rendering(raw: Mapping[str, Any] | None) -> RenderingConfig:
         values[name] = value
     for name in (
         "roi_color",
-        "transition_color",
+        "approach_roi_color",
         "stop_line_color",
-        "confirmation_line_color",
         "box_color",
         "tracking_box_color",
         "violation_box_color",
