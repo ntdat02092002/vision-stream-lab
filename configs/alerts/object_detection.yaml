@@ -1,4 +1,10 @@
 enabled: false
 output_dir: outputs/alerts/object-detection
-min_events: 1
-cooldown_seconds: 30
+evidence:
+  pre_seconds: 10
+  post_seconds: 10
+  fps: 5
+  max_width: 960
+  jpeg_quality: 80
+  include_snapshot: true
+  include_clip: true

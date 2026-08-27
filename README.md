@@ -36,7 +36,7 @@ flowchart TB
     end
 
     subgraph ALERT[OPTIONAL ALERT PROCESS]
-        SNAPSHOT[alerting/snapshot_worker]
+        EVIDENCE[alerting/evidence_worker<br/>JPEG ring + artifact writer]
     end
 
     CFG --> APP
@@ -58,8 +58,9 @@ flowchart TB
     INFERRED --> RENDER
     RENDER --> OUTPUT
     OUTPUT --> MON
-    WORKER -. lightweight event .-> SNAPSHOT
-    INFERRED --> SNAPSHOT
+    WORKER -. lightweight event .-> EVIDENCE
+    RAW --> EVIDENCE
+    INFERRED --> EVIDENCE
 ```
 
 ### Module ownership
@@ -70,7 +71,7 @@ flowchart TB
 | `runtime` | Shared image frames, opaque plugin-state transport, camera routing, queues, worker processes, batching | Prediction schemas, YOLO details and business logic |
 | `inference` | Detector contract and local/Triton/noop implementations | Camera threads and alert rules |
 | `usecases` | Plugin registry, plugin-owned config schemas, pipeline composition, rendering and business rules | Multiprocessing lifecycle |
-| `alerting` | Snapshot/file output in a separate process | Inference |
+| `alerting` | Rolling evidence buffer and artifact output in a separate process | Inference and business rules |
 | `monitoring` | Status API, MJPEG output streams, camera-wall client | Camera/model ownership |
 | `configuration` | Composing and validating YAML files | Runtime mutation |
 | `schema` / `enums` | Stable contracts shared between modules | Processing logic |
@@ -214,7 +215,7 @@ src/vision_stream_lab/
 |     |- tracker.py
 |     `- analyzer.py
 |- alerting/
-|  `- snapshot_worker.py
+|  `- evidence_worker.py
 |- monitoring/
 |  |- api.py
 |  `- frontend/
@@ -455,16 +456,26 @@ typed backend configs, per-deployment model overrides, and runtime precedence.
 
 ### Alert policy
 
-`configs/alerts/object_detection.yaml` owns output behavior.
+Each deployment can compose an evidence policy. For example:
 
 ```yaml
-enabled: false
-output_dir: outputs/alerts/object-detection
-min_events: 1
-cooldown_seconds: 30
+enabled: true
+output_dir: outputs/alerts/red-light-violation
+evidence:
+  pre_seconds: 10
+  post_seconds: 10
+  fps: 5
+  max_width: 960
+  jpeg_quality: 80
+  include_snapshot: true
+  include_clip: true
 ```
 
-When enabled, a separate process reads the latest annotated shared frame and saves snapshots. Future video encoding should remain in `alerting`, never in the inference worker.
+When enabled, a separate process samples raw shared frames into a bounded JPEG
+ring. A confirmed domain event produces `event.json`, an exact annotated
+snapshot when its source sequence is still available, and an MP4 clip (AVI/MJPEG
+fallback) covering the configured pre/post interval. JPEG and video encoding
+never run in the inference worker.
 
 ## Inference backends
 

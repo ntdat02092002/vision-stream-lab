@@ -1,5 +1,5 @@
-enabled: false
-output_dir: outputs/alerts/vehicle-counting
+enabled: true
+output_dir: outputs/alerts/red-light-violation
 evidence:
   pre_seconds: 10
   post_seconds: 10

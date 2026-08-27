@@ -259,7 +259,7 @@ def parse_config(raw: dict[str, Any]) -> FrameScoreConfig:
 import cv2
 import numpy as np
 
-from ...schema.use_case import FrameContext, UseCaseResult
+from ...schema.use_case import DomainEvent, FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import FrameScoreConfig
 
@@ -272,6 +272,7 @@ class FrameScorePipeline(UseCasePipeline):
         results = []
         for image in images:
             score = float(image.mean())
+            triggered = score >= self.config.alert_threshold
             output = image.copy()
             cv2.putText(
                 output,
@@ -285,12 +286,25 @@ class FrameScorePipeline(UseCasePipeline):
             results.append(
                 UseCaseResult(
                     output_frame=output,
-                    event_count=int(score >= self.config.alert_threshold),
+                    event_count=int(triggered),
+                    events=(
+                        DomainEvent(
+                            type="frame_score.threshold_exceeded",
+                            payload={"score": score},
+                        ),
+                    )
+                    if triggered
+                    else (),
                     metadata={"score": score},
                 )
             )
         return results
 ```
+
+`event_count` remains monitoring data. Evidence is created only from the
+first-class `events` tuple. A production use case should emit on a confirmed
+state transition (for example, a tracked object entering a zone), rather than
+emitting the same observation on every frame.
 
 ### `state.py`
 
@@ -392,8 +406,14 @@ Create alert policy:
 # configs/alerts/frame_score.yaml
 enabled: false
 output_dir: outputs/alerts/frame-score
-min_events: 1
-cooldown_seconds: 30
+evidence:
+  pre_seconds: 10
+  post_seconds: 10
+  fps: 5
+  max_width: 960
+  jpeg_quality: 80
+  include_snapshot: true
+  include_clip: true
 ```
 
 Add a deployment:
@@ -420,7 +440,7 @@ Meanings:
 | `enabled` | Whether this deployment starts |
 | `cameras` | Explicit camera IDs or `["*"]` |
 | `config` | Composed plugin-owned mapping parsed by `parse_config` |
-| `alert` | Generic alert/snapshot policy, inline or composed with `$ref` |
+| `alert` | Generic snapshot/clip evidence policy, inline or composed with `$ref` |
 | `runtime` | Optional worker override; omitted fields inherit `app.runtime.worker_defaults` |
 
 Multiple deployments may use the same plugin type with different models,

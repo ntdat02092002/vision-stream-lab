@@ -148,6 +148,18 @@ def _validate_use_case_runtime(config: UseCaseRuntimeConfig, path: str) -> None:
         raise ValueError(f"{path}.queue_timeout_ms must be >= 1")
 
 
+def _validate_alert(config: AlertConfig, path: str) -> None:
+    evidence = config.evidence
+    if evidence.pre_seconds < 0 or evidence.post_seconds < 0:
+        raise ValueError(f"{path}.evidence pre/post seconds must be >= 0")
+    if not 0 < evidence.fps <= 30:
+        raise ValueError(f"{path}.evidence.fps must be between 0 and 30")
+    if evidence.max_width < 1:
+        raise ValueError(f"{path}.evidence.max_width must be >= 1")
+    if not 1 <= evidence.jpeg_quality <= 100:
+        raise ValueError(f"{path}.evidence.jpeg_quality must be between 1 and 100")
+
+
 def _load_deployments(
     raw: Any,
     camera_ids: set[str],
@@ -192,6 +204,7 @@ def _load_deployments(
         use_case_type = str(item["type"])
         plugin_raw = _mapping(item.get("config"), f"{path}.config")
         alert = _typed_config(AlertConfig, item.get("alert"), f"{path}.alert")
+        _validate_alert(alert, f"{path}.alert")
         deployment = UseCaseDeploymentConfig(
             id=use_case_id,
             type=use_case_type,

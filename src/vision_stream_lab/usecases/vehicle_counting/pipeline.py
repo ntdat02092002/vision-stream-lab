@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ...inference.detection import create_detection_backend
-from ...schema.use_case import FrameContext, UseCaseResult
+from ...schema.use_case import DomainEvent, FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import VehicleCountingConfig
 from .gate import CameraGateState, DoubleLineGate
@@ -66,7 +66,7 @@ class VehicleCountingPipeline(UseCasePipeline):
                     self.config.spatial.anchor,
                 )
             tracked = runtime.tracker.update(visible, context.timestamp)
-            events = []
+            events: list[DomainEvent] = []
             if geometry is not None:
                 anchors = detection_anchors(tracked.boxes, self.config.spatial.anchor)
                 for track_id, anchor in zip(tracked.track_ids, anchors):
@@ -79,7 +79,20 @@ class VehicleCountingPipeline(UseCasePipeline):
                         geometry,
                     )
                     if event is not None:
-                        events.append((event.track_id, event.direction))
+                        events.append(
+                            DomainEvent(
+                                type="vehicle_counting.crossed",
+                                subject_id=f"track:{event.track_id}",
+                                dedupe_key=(
+                                    f"{context.camera_id}:vehicle-counting:"
+                                    f"{event.track_id}:{event.direction}"
+                                ),
+                                payload={
+                                    "track_id": event.track_id,
+                                    "direction": event.direction,
+                                },
+                            )
+                        )
             runtime.gate_state.cleanup(
                 context.timestamp,
                 self.config.lifecycle.stale_track_seconds,
@@ -97,6 +110,7 @@ class VehicleCountingPipeline(UseCasePipeline):
                 UseCaseResult(
                     output_frame=output,
                     event_count=len(events),
+                    events=tuple(events),
                     metadata={
                         "detections": tracked.boxes,
                         "track_ids": tracked.track_ids,
@@ -104,7 +118,7 @@ class VehicleCountingPipeline(UseCasePipeline):
                         "geometry": geometry,
                         "in_count": runtime.gate_state.in_count,
                         "out_count": runtime.gate_state.out_count,
-                        "events": tuple(events),
+                        "events": tuple(event.payload for event in events),
                     },
                 )
             )

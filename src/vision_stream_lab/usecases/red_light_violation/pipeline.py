@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ...inference.detection import create_detection_backend
-from ...schema.use_case import FrameContext, UseCaseResult
+from ...schema.use_case import DomainEvent, FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import RedLightViolationConfig
 from .gate import (
@@ -240,10 +240,22 @@ class RedLightViolationPipeline(UseCasePipeline):
                 self.config.rendering,
                 current_light_state=current_light_state,
             )
+            domain_events = tuple(
+                DomainEvent(
+                    type="red_light_violation.confirmed",
+                    subject_id=f"track:{event['track_id']}",
+                    dedupe_key=(
+                        f"{context.camera_id}:red-light-violation:{event['track_id']}"
+                    ),
+                    payload=dict(event),
+                )
+                for event in violation_events
+            )
             results.append(
                 UseCaseResult(
                     output_frame=output,
                     event_count=len(violation_events),
+                    events=domain_events,
                     metadata={
                         "detections": business_boxes,
                         "track_ids": business_track_ids,
