@@ -22,7 +22,7 @@ camera-03:
 camera-04:
   name: Ly Thuong Kiet - Hang Bai
   source: "demo_videos/16h15.7.9.22.mp4"
-  loop: true
+  loop: false
   max_fps: 0
   enabled: true
 

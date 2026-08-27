@@ -6,12 +6,13 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
 from ..schema.config import UseCaseDeploymentConfig, UseCaseRuntimeConfig
 from ..schema.frame import SharedFrameHandle, UseCaseCameraState
-from ..schema.use_case import FrameContext, UseCaseEvent
+from ..schema.use_case import AlertEvent, FrameContext
 from ..usecases import create_pipeline, publish_result
 from .shared_frames import SharedFrameStore
 
@@ -107,20 +108,31 @@ class UseCaseWorker:
                     samples = fps_samples[camera_id]
                     if len(samples) > 1:
                         state.inference_fps.value = (len(samples) - 1) / (samples[-1] - samples[0])
-                    if result.event_count and self.use_case.alert.enabled:
-                        try:
-                            self.event_queue.put(
-                                UseCaseEvent(
-                                    use_case_id=self.use_case.id,
-                                    camera_id=camera_id,
-                                    sequence=frame_context.sequence,
-                                    timestamp=frame_context.timestamp,
-                                    event_count=result.event_count,
-                                ),
-                                block=False,
-                            )
-                        except queue.Full:
-                            pass
+                    if result.events and self.use_case.alert.enabled:
+                        for domain_event in result.events:
+                            try:
+                                self.event_queue.put(
+                                    AlertEvent(
+                                        event_id=uuid4().hex,
+                                        schema_version=1,
+                                        type=domain_event.type,
+                                        use_case_id=self.use_case.id,
+                                        camera_id=camera_id,
+                                        frame_sequence=frame_context.sequence,
+                                        occurred_at=frame_context.timestamp,
+                                        subject_id=domain_event.subject_id,
+                                        dedupe_key=domain_event.dedupe_key,
+                                        payload=domain_event.payload,
+                                    ),
+                                    block=False,
+                                )
+                            except queue.Full:
+                                LOGGER.warning(
+                                    "Evidence queue full; dropped event %s for %s/%s",
+                                    domain_event.type,
+                                    self.use_case.id,
+                                    camera_id,
+                                )
         finally:
             raw_store.close()
             inference_store.close()

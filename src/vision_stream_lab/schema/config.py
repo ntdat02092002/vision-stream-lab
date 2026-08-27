@@ -47,12 +47,22 @@ class AppRuntimeConfig:
     sharding: ShardingConfig = field(default_factory=ShardingConfig)
 
 
+@dataclass
+class EvidenceConfig:
+    pre_seconds: float = 10
+    post_seconds: float = 10
+    fps: float = 5
+    max_width: int = 960
+    jpeg_quality: int = 80
+    include_snapshot: bool = True
+    include_clip: bool = True
+
+
 @dataclass(frozen=True)
 class AlertConfig:
     enabled: bool = False
     output_dir: str = "outputs/alerts"
-    min_events: int = 1
-    cooldown_seconds: float = 30
+    evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
 
 
 @dataclass(frozen=True)

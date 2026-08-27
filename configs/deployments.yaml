@@ -29,3 +29,6 @@ red-light-violation-cam-04:
 
   config:
     $ref: usecases/red_light_violation/profiles/camera-04.yaml
+
+  alert:
+    $ref: alerts/red_light_violation.yaml

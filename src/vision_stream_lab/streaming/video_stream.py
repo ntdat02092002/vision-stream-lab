@@ -265,11 +265,13 @@ class VideoStream:
 
             if not ok:
                 self.state.online.value = False
-                if source_type is CameraSourceType.VIDEO_FILE and self.camera.loop:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    source_frame_index = 0
-                    playback_started_at = time.perf_counter()
-                    continue
+                if source_type is CameraSourceType.VIDEO_FILE:
+                    if self.camera.loop:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        source_frame_index = 0
+                        playback_started_at = time.perf_counter()
+                        continue
+                    break
                 capture.release()
                 capture = None
                 self.stop_event.wait(0.5)

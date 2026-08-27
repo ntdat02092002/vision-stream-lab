@@ -4,7 +4,7 @@ import queue
 from dataclasses import dataclass
 from typing import Any
 
-from ..alerting import run_alert_worker
+from ..alerting import run_evidence_worker
 from ..schema.config import AppConfig, UseCaseDeploymentConfig
 from ..schema.frame import UseCaseCameraState
 from ..usecases import create_shared_state
@@ -80,7 +80,7 @@ class UseCaseOrchestrator:
                 output_store=output_store,
                 states=use_case_states,
                 signal_queue=context.Queue(maxsize=len(camera_ids)),
-                event_queue=context.Queue(maxsize=len(camera_ids)),
+                event_queue=context.Queue(maxsize=max(32, len(camera_ids) * 8)),
                 processes=[],
                 renderer=renderer,
             )
@@ -125,11 +125,15 @@ class UseCaseOrchestrator:
 
             if runtime.config.alert.enabled:
                 alert_worker = self.context.Process(
-                    name=f"alert-{runtime.config.id}",
-                    target=run_alert_worker,
+                    name=f"evidence-{runtime.config.id}",
+                    target=run_evidence_worker,
                     kwargs={
                         "config": runtime.config.alert,
                         "project_root": self.config.project_root,
+                        "raw_handles": {
+                            camera_id: self.raw_store.handles[camera_id]
+                            for camera_id in runtime.camera_ids
+                        },
                         "inference_handles": runtime.inference_store.handles,
                         "event_queue": runtime.event_queue,
                         "stop_event": self.stop_event,

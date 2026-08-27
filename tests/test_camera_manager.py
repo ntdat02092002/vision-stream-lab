@@ -201,6 +201,69 @@ def test_video_stream_rewinds_file_until_stopped(monkeypatch):
     assert not stream.thread.is_alive()
 
 
+def test_video_stream_stops_at_eof_when_loop_is_disabled(monkeypatch):
+    class FakeCapture:
+        def __init__(self, source):
+            self.source = source
+            self.index = 0
+            self.released = False
+
+        def isOpened(self):
+            return not self.released
+
+        def read(self):
+            if self.index >= 2:
+                return False, None
+            self.index += 1
+            return True, np.full((12, 16, 3), self.index, dtype=np.uint8)
+
+        def grab(self):
+            if self.index >= 2:
+                return False
+            self.index += 1
+            return True
+
+        def get(self, _property):
+            return 25.0
+
+        def release(self):
+            self.released = True
+
+    captures = []
+
+    def create_capture(source):
+        capture = FakeCapture(source)
+        captures.append(capture)
+        return capture
+
+    monkeypatch.setattr("vision_stream_lab.streaming.video_stream.cv2.VideoCapture", create_capture)
+
+    context = mp.get_context("spawn")
+    camera = CameraDefinition(
+        id="camera-01",
+        name="Single-play file",
+        source="single.mp4",
+        loop=False,
+        max_fps=1000,
+    )
+    store = SharedFrameStore.create(context, [camera.id], (12, 16, 3))
+    state = create_camera_states(context, [camera.id])[camera.id]
+    stream = VideoStream(camera, store.slots[camera.id], state, lambda _camera_id: None, (16, 12))
+    try:
+        stream.start()
+        assert stream.thread is not None
+        stream.thread.join(timeout=1)
+    finally:
+        stream.stop()
+        store.close(unlink=True)
+
+    assert len(captures) == 1
+    assert captures[0].released is True
+    assert state.captured_frames.value == 2
+    assert not state.online.value
+    assert not stream.thread.is_alive()
+
+
 def test_video_sampling_caps_rate_without_changing_media_speed():
     target_fps, source_step = _video_sampling_parameters(600.0, 15.0)
     assert target_fps == 15.0
