@@ -1,0 +1,75 @@
+$ref: usecases/red_light_violation/default.yaml
+
+inference:
+  confidence: 0.10
+  # COCO motorcycle only.
+  classes: [3]
+
+spatial:
+  cameras:
+    camera-01:
+      roi:
+        - [0.29, 0.24]
+        - [0.87, 0.24]
+        - [0.98, 0.99]
+        - [0.24, 0.99]
+      stop_line:
+        - [0.26, 0.72]
+        - [0.94, 0.72]
+      # Vehicles must first be seen here, then leave this region across stop_line.
+      approach_roi:
+        - [0.26, 0.72]
+        - [0.94, 0.72]
+        - [0.98, 0.99]
+        - [0.24, 0.99]
+
+      # Opposite three-aspect signal, calibrated from the 1600x1200 source.
+      traffic_light:
+        roi:
+          - [0.276, 0.130]
+          - [0.299, 0.133]
+          - [0.297, 0.188]
+          - [0.275, 0.185]
+        bulb_positions:
+          red: [0.40, 0.30]
+          yellow: [0.43, 0.54]
+          green: [0.47, 0.76]
+        bulb_radius: 0.18
+        min_score: 0.20
+        smoothing_window: 1
+
+      exits:
+        - id: straight
+          movement: straight
+          polygon:
+            - [0.32, 0.33]
+            - [0.34, 0.24]
+            - [0.63, 0.24]
+            - [0.63, 0.32]
+
+        - id: left
+          movement: left_turn
+          polygon:
+            - [0.29, 0.35]
+            - [0.38, 0.34]
+            - [0.37, 0.66]
+            - [0.27, 0.66]
+
+        - id: right
+          movement: right_turn
+          polygon:
+            - [0.61, 0.33]
+            - [0.73, 0.24]
+            - [0.83, 0.35]
+            - [0.73, 0.47]
+
+      policy:
+        enforced_light_states: [red]
+        allowed:
+          right_turn: [] # motorcycle
+          straight: []
+          left_turn: []
+
+lifecycle:
+  max_movement_seconds: 90
+  stale_track_seconds: 6

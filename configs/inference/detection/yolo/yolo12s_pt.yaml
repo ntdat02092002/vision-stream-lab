@@ -1,0 +1,17 @@
+model_family: yolo
+backend: ultralytics
+model_path: models/yolo12s.pt
+device: auto
+image_size: 640
+confidence: 0.25
+iou: 0.45
+
+# null keeps all 80 COCO classes exported by the standard YOLO11 model.
+classes: null
+
+# # ONNX Runtime-only settings. Other backends have different typed schemas.
+# providers: null
+# intra_op_threads: 0
+# inter_op_threads: 0
+# output_name: null
+max_detections: 300
