@@ -10,10 +10,12 @@ from uuid import uuid4
 
 import numpy as np
 
+from ..inference.services import InferenceServiceHandles
 from ..schema.config import UseCaseDeploymentConfig, UseCaseRuntimeConfig
 from ..schema.frame import SharedFrameHandle, UseCaseCameraState
 from ..schema.use_case import AlertEvent, FrameContext
 from ..usecases import create_pipeline, publish_result
+from .inference_execution import StaleSharedFrameError
 from .shared_frames import SharedFrameStore
 
 LOGGER = logging.getLogger(__name__)
@@ -28,27 +30,30 @@ class UseCaseWorker:
         use_case: UseCaseDeploymentConfig,
         project_root: Path,
         raw_handles: dict[str, SharedFrameHandle],
-        inference_handles: dict[str, SharedFrameHandle],
+        annotated_frame_handles: dict[str, SharedFrameHandle],
         states: dict[str, UseCaseCameraState],
         signal_queue: Any,
         event_queue: Any,
         stop_event: Any,
+        inference_service_handles: InferenceServiceHandles,
     ):
         self.runtime = runtime
         self.use_case = use_case
         self.project_root = project_root
         self.raw_handles = raw_handles
-        self.inference_handles = inference_handles
+        self.annotated_frame_handles = annotated_frame_handles
         self.states = states
         self.signal_queue = signal_queue
         self.event_queue = event_queue
         self.stop_event = stop_event
+        self.inference_service_handles = inference_service_handles
 
     def run(self) -> None:
         logging.basicConfig(level=logging.INFO)
         raw_store = SharedFrameStore(self.raw_handles)
-        inference_store = SharedFrameStore(self.inference_handles)
-        pipeline = create_pipeline(self.use_case, self.project_root)
+        inference_store = SharedFrameStore(self.annotated_frame_handles)
+        services = self.inference_service_handles.connect()
+        pipeline = create_pipeline(self.use_case, self.project_root, services)
         fps_samples: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=30))
         LOGGER.info(
             "Use-case worker %s (%s) started",
@@ -79,7 +84,12 @@ class UseCaseWorker:
                     FrameContext(camera_id=camera_id, sequence=sequence, timestamp=timestamp)
                     for camera_id, sequence, timestamp in metadata
                 ]
-                results = pipeline.process_batch(frames, contexts)
+                try:
+                    results = pipeline.process_batch(frames, contexts)
+                except StaleSharedFrameError:
+                    # Latest-frame transport intentionally drops work that the
+                    # camera has already superseded instead of building backlog.
+                    continue
                 batch_latency_ms = (time.perf_counter() - started) * 1000
                 if len(results) != len(frames):
                     raise RuntimeError(
@@ -134,6 +144,8 @@ class UseCaseWorker:
                                     camera_id,
                                 )
         finally:
+            pipeline.close()
+            services.close()
             raw_store.close()
             inference_store.close()
             LOGGER.info("Use-case worker %s stopped", self.use_case.id)

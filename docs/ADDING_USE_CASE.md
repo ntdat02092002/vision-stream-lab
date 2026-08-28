@@ -91,22 +91,22 @@ Pipeline invariants:
 6. `metadata` is private to the plugin's `publish_result` hook. Runtime code
    never reads plugin-specific keys.
 7. Keep temporal state separated by `context.camera_id`.
-8. Construct models in `create_pipeline`, which runs inside the use-case child
-   process. Do not load a model at module import time.
-9. The pipeline currently runs model and business logic sequentially in one
-   process. Do not create extra processes or threads inside a plugin unless the
-   architecture is deliberately changed and measured.
+8. Declare runtime-managed model dependencies through the optional
+   `inference_bindings` hook and consume the injected typed provider in
+   `create_pipeline`. Models not declared there remain entirely plugin-private.
+9. Business logic remains sequential and camera-ordered inside the use-case
+   process. Do not create extra model processes or queues inside a plugin.
 
 ## 4. `UseCasePlugin` hook contract
 
-The descriptor has five required hooks and one optional static-overlay hook:
+The descriptor has five required hooks and two optional hooks:
 
 ```python
 @dataclass(frozen=True)
 class UseCasePlugin:
     type: str
     parse_config: Callable[[Mapping[str, Any]], Any]
-    create_pipeline: Callable[[Any, Path], UseCasePipeline]
+    create_pipeline: Callable[[Any, Path, InferenceServices], UseCasePipeline]
     create_shared_state: Callable[[Any, Any], Any]
     publish_result: Callable[[Any, UseCaseResult, FrameContext, Any], None]
     render_latest: Callable[
@@ -114,6 +114,9 @@ class UseCasePlugin:
     ]
     render_static_overlay: Callable[
         [np.ndarray, str, Any, Any], np.ndarray
+    ] | None = None
+    inference_bindings: Callable[
+        [Any], Mapping[str, InferenceBinding]
     ] | None = None
 ```
 
@@ -132,15 +135,51 @@ It should:
 The returned config must be pickle-compatible because it is passed to a child
 process with the Windows `spawn` multiprocessing method.
 
-### `create_pipeline(plugin_config, project_root) -> UseCasePipeline`
+### `create_pipeline(plugin_config, project_root, services) -> UseCasePipeline`
 
 Runs once inside each use-case deployment process.
 
 It owns:
 
-- model/backend construction;
 - analyzers and business rules;
 - optional per-camera trackers or temporal state.
+
+Use `services.detection["detector"]` for a declared detection dependency. The
+coordinator always injects either a local or shared provider; business pipelines
+must not load the same declared model again as a fallback. The worker owns and
+closes runtime-managed services.
+
+Plugin-private inference remains an escape hatch: omit that dependency from
+`inference_bindings` and construct the custom runtime entirely inside the
+pipeline. Runtime core will not manage or share it.
+
+### `inference_bindings(plugin_config)` (optional)
+
+Declare named runtime dependencies without making the plugin contract specific
+to detection:
+
+```python
+return {
+    "detector": InferenceBinding(
+        objective=InferenceObjective.DETECTION,
+        config=config.inference,
+    )
+}
+```
+
+`InferenceCoordinator` currently supports detection. An unsupported declared
+objective fails startup with a clear error. For detection, `execution: local`
+creates the provider inside the use-case process. When two or more shared
+bindings have the same `ModelSpec`, the coordinator injects providers backed by one
+shared worker. A unique shared request resolves locally because there is
+nothing to deduplicate or batch across consumers.
+
+Shared providers accept original full frames only. They send `camera_id` and
+`sequence` through IPC and read the existing raw latest-frame slot directly.
+Use plugin-private inference for crops, transformed images, or unusual model
+lifecycle that does not fit the current runtime-managed full-frame contract. A
+plugin may declare multiple dependencies with descriptive names; binding names
+do not affect `ModelSpec` equality.
 
 Resolve relative model/resource paths against `project_root`.
 
@@ -372,7 +411,7 @@ from .state import create_shared_state, publish_result
 from ..plugin import UseCasePlugin
 
 
-def create_pipeline(config, _project_root):
+def create_pipeline(config, _project_root, _services):
     if not isinstance(config, FrameScoreConfig):
         raise TypeError("frame_score requires FrameScoreConfig")
     return FrameScorePipeline(config)

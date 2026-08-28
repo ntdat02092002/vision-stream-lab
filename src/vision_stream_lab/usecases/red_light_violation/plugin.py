@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from ...inference.bindings import InferenceBinding, InferenceObjective
+from ...inference.services import InferenceServices
 from ...schema.use_case import FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from ..plugin import UseCasePlugin
@@ -12,12 +14,30 @@ from .config import RedLightViolationConfig, parse_red_light_violation_config
 from .state import SharedRedLightViolationState
 
 
-def _create_pipeline(config: Any, project_root: Path) -> UseCasePipeline:
+def _create_pipeline(
+    config: Any,
+    _project_root: Path,
+    services: InferenceServices,
+) -> UseCasePipeline:
     if not isinstance(config, RedLightViolationConfig):
         raise TypeError("red_light_violation requires RedLightViolationConfig")
     from .pipeline import RedLightViolationPipeline
 
-    return RedLightViolationPipeline(config, project_root)
+    return RedLightViolationPipeline(
+        config,
+        detector=services.detection["detector"],
+    )
+
+
+def _inference_bindings(config: Any):
+    if not isinstance(config, RedLightViolationConfig):
+        raise TypeError("red_light_violation requires RedLightViolationConfig")
+    return {
+        "detector": InferenceBinding(
+            objective=InferenceObjective.DETECTION,
+            config=config.inference,
+        )
+    }
 
 
 def _create_shared_state(context: Any, config: Any) -> SharedRedLightViolationState:
@@ -83,5 +103,6 @@ PLUGIN = UseCasePlugin(
     publish_result=_publish_result,
     render_latest=_render_latest,
     render_static_overlay=_render_static_overlay,
+    inference_bindings=_inference_bindings,
 )
 

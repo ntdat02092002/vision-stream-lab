@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypeAlias
 
+from ...bindings import InferenceExecution
+
 MODEL_FAMILY = "yolo"
 
 
@@ -18,6 +20,7 @@ class YoloBackendType(str, Enum):
 class OnnxYoloConfig:
     model_family: str = field(default=MODEL_FAMILY, init=False)
     backend: YoloBackendType = field(default=YoloBackendType.ONNX, init=False)
+    execution: InferenceExecution = InferenceExecution.LOCAL
     model_path: str = "models/yolo11n.onnx"
     device: str | int = "auto"
     image_size: int = 640
@@ -38,6 +41,7 @@ class UltralyticsYoloConfig:
         default=YoloBackendType.ULTRALYTICS,
         init=False,
     )
+    execution: InferenceExecution = InferenceExecution.LOCAL
     model_path: str = "models/yolo11n.pt"
     device: str | int = "auto"
     image_size: int = 640
@@ -51,6 +55,7 @@ class UltralyticsYoloConfig:
 class TritonYoloConfig:
     model_family: str = field(default=MODEL_FAMILY, init=False)
     backend: YoloBackendType = field(default=YoloBackendType.TRITON, init=False)
+    execution: InferenceExecution = InferenceExecution.LOCAL
     url: str = "localhost:8001"
     model_name: str = "yolo"
     model_version: str = "1"
@@ -81,6 +86,13 @@ def parse_yolo_config(raw: Mapping[str, Any]) -> YoloConfig:
     except ValueError as exc:
         available = ", ".join(item.value for item in YoloBackendType)
         raise ValueError(f"Unknown YOLO backend; available: {available}") from exc
+
+    try:
+        data["execution"] = InferenceExecution(
+            data.get("execution", InferenceExecution.LOCAL)
+        )
+    except ValueError as exc:
+        raise ValueError("inference.execution must be 'local' or 'shared'") from exc
 
     if backend is YoloBackendType.ONNX and isinstance(data.get("providers"), list):
         data["providers"] = tuple(data["providers"])

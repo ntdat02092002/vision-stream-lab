@@ -6,11 +6,13 @@ import numpy as np
 import pytest
 
 from vision_stream_lab.inference.detection import (
+    LocalDetectionProvider,
     get_detection_family,
     parse_detection_backend_config,
     registered_detection_families,
 )
 from vision_stream_lab.inference.detection.noop.config import NoopDetectionConfig
+from vision_stream_lab.inference.services import InferenceServices
 from vision_stream_lab.schema.config import UseCaseDeploymentConfig
 from vision_stream_lab.schema.use_case import FrameContext, UseCaseResult
 from vision_stream_lab.usecases import (
@@ -88,7 +90,15 @@ def test_object_detection_pipeline_contract_with_noop_backend():
             inference=NoopDetectionConfig()
         ),
     )
-    pipeline = create_pipeline(config, Path.cwd())
+    services = InferenceServices(
+        detection={
+            "detector": LocalDetectionProvider(
+                config.plugin_config.inference,
+                Path.cwd(),
+            )
+        }
+    )
+    pipeline = create_pipeline(config, Path.cwd(), services)
     images = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(3)]
     results = pipeline.process_batch(images)
     assert len(results) == 3
@@ -96,6 +106,7 @@ def test_object_detection_pipeline_contract_with_noop_backend():
     assert all(result.event_count == 0 for result in results)
     assert pipeline.tracker_config is None
     assert pipeline.trackers == {}
+    services.close()
 
 
 def test_object_detection_plugin_owns_shared_result_schema_and_writer():

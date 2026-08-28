@@ -7,11 +7,14 @@ from typing import Any
 
 import numpy as np
 
+from ..inference.bindings import InferenceBinding
+from ..inference.services import InferenceServices
 from ..schema.use_case import FrameContext, UseCaseResult
 from .base import UseCasePipeline
 
 PluginConfigParser = Callable[[Mapping[str, Any]], Any]
-PipelineFactory = Callable[[Any, Path], UseCasePipeline]
+PipelineFactory = Callable[[Any, Path, InferenceServices], UseCasePipeline]
+InferenceBindingsFactory = Callable[[Any], Mapping[str, InferenceBinding]]
 SharedStateFactory = Callable[[Any, Any], Any]
 ResultPublisher = Callable[[Any, UseCaseResult, FrameContext, Any], None]
 LatestResultRenderer = Callable[[np.ndarray, Any, float, float, float, Any], np.ndarray]
@@ -29,3 +32,4 @@ class UseCasePlugin:
     publish_result: ResultPublisher
     render_latest: LatestResultRenderer
     render_static_overlay: StaticOverlayRenderer | None = None
+    inference_bindings: InferenceBindingsFactory | None = None

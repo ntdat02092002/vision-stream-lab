@@ -34,16 +34,17 @@ def main() -> None:
             response.raise_for_status()
             status = response.json()
             print(status)
-            primary = status["primary_use_case"]
             for camera in status["cameras"]:
                 assert camera["captured"] > 0, camera
-                assert camera["use_cases"][primary]["inferred"] > 0, camera
-                frame = client.get(
-                    f"/api/cameras/{camera['id']}/frame.jpg?use_case={primary}"
-                )
-                assert frame.status_code == 200
-                assert frame.headers["content-type"] == "image/jpeg"
-                assert len(frame.content) > 1000
+                assert camera["use_cases"], camera
+                for use_case_id, use_case in camera["use_cases"].items():
+                    assert use_case["inferred"] > 0, (camera, use_case_id)
+                    frame = client.get(
+                        f"/api/cameras/{camera['id']}/frame.jpg?use_case={use_case_id}"
+                    )
+                    assert frame.status_code == 200
+                    assert frame.headers["content-type"] == "image/jpeg"
+                    assert len(frame.content) > 1000
     finally:
         runtime.close()
 

@@ -1,4 +1,4 @@
-enabled: true
+enabled: false
 output_dir: outputs/alerts/red-light-violation
 evidence:
   pre_seconds: 10

@@ -11,17 +11,17 @@
 #   alert:
 #     $ref: alerts/object_detection.yaml
 
-vehicle-counting-camera-01:
+vehicle-counting:
   type: vehicle_counting
-  enabled: false
-  cameras: [camera-01]
+  enabled: true
+  cameras: [camera-01, camera-02, camera-03]
 
   config:
-    $ref: usecases/vehicle_counting/profiles/camera-01-road-gate.yaml
+    $ref: usecases/vehicle_counting/profiles/all-traffic-cameras.yaml
 
   alert:
     $ref: alerts/vehicle_counting.yaml
-  
+
 red-light-violation-cam-04:
   type: red_light_violation
   enabled: true

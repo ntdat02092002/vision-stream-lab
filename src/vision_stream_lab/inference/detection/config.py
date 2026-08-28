@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from ..bindings import InferenceExecution
+
 
 class DetectionBackendConfig(Protocol):
     """Structural config contract shared by independently discovered families."""
 
     model_family: str
     backend: Any
+    execution: InferenceExecution
     max_detections: int
 
 

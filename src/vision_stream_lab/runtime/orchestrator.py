@@ -8,6 +8,7 @@ from ..alerting import run_evidence_worker
 from ..schema.config import AppConfig, UseCaseDeploymentConfig
 from ..schema.frame import UseCaseCameraState
 from ..usecases import create_shared_state
+from .inference_execution import InferenceCoordinator
 from .output_renderer import UseCaseOutputRenderer
 from .shared_frames import (
     SharedFrameStore,
@@ -37,6 +38,12 @@ class UseCaseOrchestrator:
         self.config = config
         self.raw_store = raw_store
         self.stop_event = context.Event()
+        self.inference_coordinator = InferenceCoordinator(
+            context,
+            config,
+            raw_store.handles,
+            self.stop_event,
+        )
         all_camera_ids = [camera.id for camera in config.cameras]
         self.runtimes: dict[str, UseCaseRuntime] = {}
 
@@ -100,6 +107,7 @@ class UseCaseOrchestrator:
         }
 
     def start(self) -> None:
+        self.inference_coordinator.start()
         for runtime in self.runtimes.values():
             worker = self.context.Process(
                 name=f"use-case-{runtime.config.id}",
@@ -112,11 +120,14 @@ class UseCaseOrchestrator:
                         camera_id: self.raw_store.handles[camera_id]
                         for camera_id in runtime.camera_ids
                     },
-                    "inference_handles": runtime.inference_store.handles,
+                    "annotated_frame_handles": runtime.inference_store.handles,
                     "states": runtime.states,
                     "signal_queue": runtime.signal_queue,
                     "event_queue": runtime.event_queue,
                     "stop_event": self.stop_event,
+                    "inference_service_handles": self.inference_coordinator.service_handles(
+                        runtime.config.id
+                    ),
                 },
             )
             worker.start()
@@ -171,3 +182,4 @@ class UseCaseOrchestrator:
             runtime.event_queue.close()
             runtime.inference_store.close(unlink=True)
             runtime.output_store.close(unlink=True)
+        self.inference_coordinator.close()

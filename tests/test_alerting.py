@@ -139,6 +139,9 @@ def test_spawned_evidence_worker_builds_artifacts_without_frame_queue(tmp_path):
     )
     process.start()
     try:
+        # Windows spawn can take longer than the synthetic frame interval. Let
+        # the worker attach to shared memory before publishing the short burst.
+        time.sleep(0.3)
         event: AlertEvent | None = None
         for sequence in range(1, 9):
             timestamp = time.time()

@@ -1,0 +1,79 @@
+$ref: usecases/vehicle_counting/default.yaml
+
+inference:
+  confidence: 0.10
+  # COCO car, motorcycle, bus, and truck.
+  classes: [2, 3, 5, 7]
+
+tracker:
+  frame_rate: 15.0
+  lost_track_buffer: 45
+  minimum_iou_threshold: 0.07
+
+spatial:
+  cameras:
+    camera-01:
+      roi:
+        - [0.42, 0.43]
+        - [0.81, 0.43]
+        - [0.97, 0.99]
+        - [0.34, 0.99]
+      line_1:
+        - [0.37, 0.73]
+        - [0.90, 0.73]
+      line_2:
+        - [0.39, 0.61]
+        - [0.86, 0.60]
+      transition:
+        - [0.37, 0.73]
+        - [0.90, 0.73]
+        - [0.86, 0.60]
+        - [0.39, 0.61]
+      # Far side of the road -> near side of the camera is IN.
+      in_direction: line_1_to_line_2
+
+    camera-02:
+      # Both carriageways of the daytime ACC highway view.
+      roi:
+        - [0.30, 0.02]
+        - [0.69, 0.02]
+        - [1.00, 1.00]
+        - [0.00, 1.00]
+      line_1:
+        - [0.08, 0.68]
+        - [0.87, 0.68]
+      line_2:
+        - [0.13, 0.56]
+        - [0.82, 0.56]
+      transition:
+        - [0.08, 0.68]
+        - [0.87, 0.68]
+        - [0.82, 0.56]
+        - [0.13, 0.56]
+      # Vehicles travelling toward the horizon are IN.
+      in_direction: line_1_to_line_2
+
+    camera-03:
+      # Both carriageways of the nighttime ACC bridge view.
+      roi:
+        - [0.28, 0.03]
+        - [0.73, 0.03]
+        - [1.00, 1.00]
+        - [0.00, 1.00]
+      line_1:
+        - [0.07, 0.68]
+        - [0.84, 0.68]
+      line_2:
+        - [0.12, 0.55]
+        - [0.81, 0.55]
+      transition:
+        - [0.07, 0.68]
+        - [0.84, 0.68]
+        - [0.81, 0.55]
+        - [0.12, 0.55]
+      # Vehicles travelling toward the horizon are IN.
+      in_direction: line_1_to_line_2
+
+lifecycle:
+  max_transition_seconds: 90
+  stale_track_seconds: 6

@@ -1,5 +1,6 @@
 model_family: yolo
 backend: ultralytics
+execution: local
 model_path: models/yolo11n.pt
 device: auto
 image_size: 640

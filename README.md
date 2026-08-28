@@ -18,6 +18,7 @@ flowchart TB
         APP[VisionRuntime]
         STREAM[streaming<br/>CameraManager + VideoStream]
         ROUTER[runtime/orchestrator<br/>camera-to-use-case routing]
+        COORD[runtime/inference_execution<br/>dependency + execution coordinator]
         RENDER[runtime/output_renderer<br/>steady-FPS composition]
         MON[monitoring<br/>FastAPI + dashboard]
     end
@@ -32,7 +33,11 @@ flowchart TB
     subgraph USECASE[USE-CASE PROCESS<br/>one process per enabled use case]
         WORKER[runtime/use_case_worker<br/>blocking queue + batch scheduler]
         PIPELINE[usecases/object_detection<br/>pipeline + Kalman tracker + analyzer]
-        MODEL[inference<br/>ONNX, local YOLO, or Triton]
+    end
+
+    subgraph MODELHOST[OPTIONAL SHARED MODEL WORKER]
+        PROVIDER[runtime/inference_execution/shared_detection<br/>full-frame provider]
+        MODEL[inference<br/>one reused ModelSpec]
     end
 
     subgraph ALERT[OPTIONAL ALERT PROCESS]
@@ -42,14 +47,18 @@ flowchart TB
     CFG --> APP
     APP --> STREAM
     APP --> ROUTER
+    ROUTER --> COORD
     APP --> MON
     STREAM --> RAW
     STREAM -. camera ID only .-> ROUTER
     ROUTER -. latest-signal queue .-> WORKER
     RAW --> WORKER
+    RAW --> PROVIDER
     WORKER --> PIPELINE
-    PIPELINE --> MODEL
-    MODEL --> PIPELINE
+    PIPELINE -. typed request .-> PROVIDER
+    PROVIDER --> MODEL
+    MODEL --> PROVIDER
+    PROVIDER -. normalized prediction .-> PIPELINE
     PIPELINE --> WORKER
     WORKER -. plugin publish_result hook .-> PSTATE
     WORKER --> INFERRED
@@ -68,8 +77,8 @@ flowchart TB
 | Module | Owns | Does not own |
 |---|---|---|
 | `streaming` | Camera lifecycle, OpenCV reading, reconnect/loop, capture FPS | Models, use-case rules, alert encoding |
-| `runtime` | Shared image frames, opaque plugin-state transport, camera routing, queues, worker processes, batching | Prediction schemas, YOLO details and business logic |
-| `inference` | Detector contract and local/Triton/noop implementations | Camera threads and alert rules |
+| `runtime` | Shared image frames, opaque plugin-state transport, camera routing, queues, worker processes, provider scheduling | Model-family details and business logic |
+| `inference` | Typed providers, `ModelSpec`, detector contract and local/Triton/noop implementations | Camera threads and alert rules |
 | `usecases` | Plugin registry, plugin-owned config schemas, pipeline composition, rendering and business rules | Multiprocessing lifecycle |
 | `alerting` | Rolling evidence buffer and artifact output in a separate process | Inference and business rules |
 | `monitoring` | Status API, MJPEG output streams, camera-wall client | Camera/model ownership |
@@ -93,10 +102,13 @@ Main process
 |- UseCaseOutputRenderer thread per use case
 `- FastAPI monitoring
 
+Optional shared detection process per reused ModelSpec
+`- One backend instance shared by two or more opted-in consumers
+
 Object-detection process
 `- UseCaseWorker
    `- ObjectDetectionPipeline
-      |- DetectionBackend
+      |- Runtime-injected DetectionProvider (local or shared)
       |- PerCameraKalmanTracker (optional/off by default)
       `- ObjectDetectionAnalyzer
 
@@ -104,7 +116,13 @@ Optional alert process
 `- SnapshotAlertWorker
 ```
 
-`UseCaseWorker` is an object running inside a physical OS process. `ObjectDetectionPipeline` is the use-case logic object inside that worker.
+`UseCaseWorker` is an object running inside a physical OS process. Plugins
+declare runtime-managed dependencies through generic `InferenceBinding` values;
+`InferenceCoordinator` resolves and injects their typed providers. A shared
+worker is created only when at least two consumers explicitly select
+`execution: shared` and resolve to the same `ModelSpec`. Unique models,
+`execution: local`, and remote clients such as Triton are constructed inside the
+use-case process through a local provider handle.
 
 ## Frame flow
 
@@ -116,6 +134,7 @@ sequenceDiagram
     participant Queue as Use-case signal queue
     participant Worker as UseCaseWorker process
     participant Pipeline as ObjectDetectionPipeline
+    participant Provider as Shared detection host
     participant Tracker as Per-camera Kalman tracker
     participant PluginState as Object-detection-owned shared state
     participant Inferred as Annotated frame shared slot
@@ -131,7 +150,10 @@ sequenceDiagram
     Worker->>Queue: get(timeout), then collect IDs until batch deadline
     Worker->>Raw: read latest frame for each camera ID
     Worker->>Pipeline: process_batch(images, camera/timestamp contexts)
-    Pipeline->>Pipeline: one batched model call
+    Pipeline->>Provider: enqueue camera_id + raw sequence only
+    Provider->>Raw: copy exact latest-frame snapshot or reject stale request
+    Provider->>Provider: batch equal ModelSpec requests and run one model call
+    Provider-->>Pipeline: normalized ordered predictions
     Pipeline->>Tracker: update each camera's tracks
     Tracker-->>Pipeline: filtered boxes + estimated velocity
     Pipeline->>Pipeline: analyze each result
@@ -151,11 +173,14 @@ sequenceDiagram
 Important behavior:
 
 - NumPy frames are never serialized through a multiprocessing queue.
-- Queues contain small camera IDs only.
+- Queues contain camera IDs, typed inference metadata, and compact predictions;
+  full images stay in shared-memory slots.
 - Each use-case/camera pair has at most one pending signal.
 - New frames overwrite old shared slots, so stale frames do not build a backlog.
 - The worker uses blocking `Queue.get(timeout=...)`, not an empty busy-loop.
 - Multiple cameras are sent to YOLO/Triton in one real batch call.
+- Shared detection is full-frame only and reads the existing raw slots directly;
+  it does not allocate another image slot per provider/camera.
 - Generic runtime/schema code never assumes boxes, velocities, OCR text, poses, or
   any other plugin result layout. Each plugin allocates, publishes, reads, and
   renders its own shared result state.
@@ -428,9 +453,10 @@ The namespace is reserved for future `tripwires` (line-crossing events) and
 ### Vehicle counting
 
 `vehicle_counting` is a separate plugin that leaves the object-detection demo
-unchanged. The included `vehicle-counting-camera-01` deployment reuses YOLO11n,
-keeps only COCO class `2` (`car`), filters detections by a road ROI, and assigns
-persistent IDs with ByteTrack and a Kalman state estimator.
+unchanged. The included `vehicle-counting` deployment reuses one YOLO11n worker
+across cameras 01-03, keeps COCO cars, motorcycles, buses, and trucks, filters
+detections by each camera's road ROI, and assigns persistent IDs with ByteTrack
+and a Kalman state estimator.
 
 A crossing is accepted only after one ID completes the configured schedule:
 
@@ -442,8 +468,8 @@ OUT: Line 2 -> observed in transition zone -> Line 1
 Partial crossings, direct jumps across both lines, timeouts, and returns through
 the first line do not increment the counters. Counts are shown on the video and
 live only for the lifetime of the worker process. Camera-specific normalized
-geometry and tracker thresholds live in
-`configs/usecases/vehicle_counting/profiles/camera-01-road-gate.yaml`.
+geometry and shared tracker thresholds live in
+`configs/usecases/vehicle_counting/profiles/all-traffic-cameras.yaml`.
 
 Inspect the exact resolved tree and winning source file for every leaf:
 

@@ -70,16 +70,42 @@ Every backend must preserve these invariants:
 1. Accept a batch, including an empty batch.
 2. Return exactly one output per input.
 3. Preserve input/output order.
-4. Run synchronously; the caller owns scheduling and process lifecycle.
+4. Run synchronously; the provider/runtime owns scheduling and process lifecycle.
 5. Do not contain camera routing, alerting, tracking, zones, or business rules.
 6. Do not mutate input images.
 7. Raise clear startup errors for missing packages, weights, providers, or
    incompatible model shapes.
 
-The runtime already batches camera frames in the use-case worker. An inference
-backend must not create another multiprocessing worker or an internal frame
-queue. Triton may batch/scale remotely, but its client call remains synchronous
-from the plugin pipeline's perspective.
+The runtime calls backends through an objective-typed provider. `execution:
+local` keeps the backend in its use-case process. `execution: shared` makes a
+full-frame model eligible for sharing, but the runtime creates a worker only
+when at least two consumers resolve to the same `ModelSpec`. Each reused spec
+gets its own worker; unrelated models are never serialized behind one host.
+
+The shared worker reads the existing raw latest-frame slot by `camera_id` and
+`sequence`. It does not allocate a second set of image transport slots. A stale
+sequence is dropped to preserve realtime latest-frame semantics. Triton may
+batch/scale remotely, but its client call remains synchronous from the plugin
+pipeline's perspective.
+
+An inference backend must not create another multiprocessing worker or internal
+frame queue. Shared execution is intentionally limited to original full-frame
+inputs. Keep crop or transformed-image inference local until a real repeated
+workload justifies another transport contract.
+
+### Backend versus provider
+
+These are intentionally separate boundaries:
+
+- `DetectionBackend` is the model adapter contract. It accepts BGR images and
+  knows nothing about cameras, frame sequences, processes, or IPC.
+- `DetectionProvider` is the business-facing structural port injected into a
+  use-case. Its optional `FrameContext` lets a shared implementation reference
+  the correct raw slot; a local implementation delegates to a backend.
+
+`DetectionProvider` is a `Protocol`, not a second backend ABC. Keep backend
+implementations under model families and provider/execution adapters outside
+business pipelines.
 
 ## 4. Objective-specific contract
 

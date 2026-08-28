@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import numpy as np
 
-from ...inference.detection import create_detection_backend
+from ...inference.detection import DetectionProvider
 from ...schema.use_case import FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .analyzer import ObjectDetectionAnalyzer
@@ -15,8 +14,12 @@ from .tracker import PerCameraKalmanTracker
 
 
 class ObjectDetectionPipeline(UseCasePipeline):
-    def __init__(self, config: ObjectDetectionConfig, project_root: Path):
-        self.detector = create_detection_backend(config.inference, project_root)
+    def __init__(
+        self,
+        config: ObjectDetectionConfig,
+        detector: DetectionProvider,
+    ):
+        self.detector = detector
         self.analyzer = ObjectDetectionAnalyzer()
         self.tracker_config = config.tracker if config.tracker.enabled else None
         self.spatial_config = config.spatial
@@ -27,7 +30,6 @@ class ObjectDetectionPipeline(UseCasePipeline):
         images: list[np.ndarray],
         contexts: list[FrameContext] | None = None,
     ) -> list[UseCaseResult]:
-        batch = self.detector.predict_batch(images)
         if contexts is None:
             now = time.time()
             contexts = [
@@ -36,6 +38,7 @@ class ObjectDetectionPipeline(UseCasePipeline):
             ]
         if len(contexts) != len(images):
             raise ValueError("Frame contexts must match image batch size")
+        batch = self.detector.predict_batch(images, contexts)
 
         results: list[UseCaseResult] = []
         for image, prediction, context in zip(images, batch, contexts):
