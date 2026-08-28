@@ -1,6 +1,6 @@
 # Camera-independent defaults for the vehicle-counting plugin.
 inference:
-  $ref: inference/detection/yolo/yolo11n_pt.yaml
+  $ref: inference/detection/yolo/yolo12s_pt.yaml
 
 tracker:
   frame_rate: 6.0
