@@ -1,7 +1,7 @@
 $ref: usecases/vehicle_counting/default.yaml
 
 inference:
-  execution: shared
+  execution: local
   confidence: 0.10
   # COCO car, motorcycle, bus, and truck.
   classes: [2, 3, 5, 7]

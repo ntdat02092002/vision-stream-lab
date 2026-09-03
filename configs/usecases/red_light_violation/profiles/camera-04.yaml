@@ -1,7 +1,7 @@
 $ref: usecases/red_light_violation/default.yaml
 
 inference:
-  execution: shared
+  execution: local
   confidence: 0.10
   # COCO motorcycle only.
   classes: [3]
