@@ -8,6 +8,7 @@ class UseCaseMetricsSnapshot:
     inferred: int
     events: int
     dropped_signals: int
+    stale_inference_drops: int
 
 
 @dataclass(frozen=True)

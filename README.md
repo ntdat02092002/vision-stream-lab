@@ -703,6 +703,7 @@ Dashboard metrics:
 - Inferred/captured frame counters
 - Latest event count
 - Dropped signal count
+- Stale shared-inference drop count
 
 ## Multi-instance and GPU sharding
 

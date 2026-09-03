@@ -148,6 +148,7 @@ def create_use_case_states(
             output_fps=context.Value("d", 0.0),
             rendered_frames=context.Value("Q", 0),
             dropped_signals=context.Value("Q", 0),
+            stale_inference_drops=context.Value("Q", 0),
             events=context.Value("i", 0),
             signal_pending=context.Value("b", False),
             signal_lock=context.Lock(),

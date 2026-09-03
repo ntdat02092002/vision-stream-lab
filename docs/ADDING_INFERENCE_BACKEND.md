@@ -84,7 +84,8 @@ gets its own worker; unrelated models are never serialized behind one host.
 
 The shared worker reads the existing raw latest-frame slot by `camera_id` and
 `sequence`. It does not allocate a second set of image transport slots. A stale
-sequence is dropped to preserve realtime latest-frame semantics. Triton may
+sequence is dropped to preserve realtime latest-frame semantics and counted as
+`stale_inference_drops` separately from signal-queue overflow. Triton may
 batch/scale remotely, but its client call remains synchronous from the plugin
 pipeline's perspective.
 

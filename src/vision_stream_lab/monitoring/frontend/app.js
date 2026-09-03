@@ -96,7 +96,7 @@ function updateCard(card, camera) {
   card.querySelector('.latency').textContent = metrics ? metrics.latency_ms.toFixed(0) : '—';
   card.querySelector('.frames').textContent = metrics ? `${metrics.inferred}/${camera.captured}` : `0/${camera.captured}`;
   card.querySelector('.event-badge').textContent = metrics
-    ? `${metrics.events} events · ${metrics.dropped_signals} dropped`
+    ? `${metrics.events} events · ${metrics.dropped_signals} signal drops · ${metrics.stale_inference_drops} stale drops`
     : 'Pipeline not assigned';
 }
 

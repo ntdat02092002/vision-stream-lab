@@ -26,6 +26,7 @@ class UseCaseCameraState:
     output_fps: Any
     rendered_frames: Any
     dropped_signals: Any
+    stale_inference_drops: Any
     events: Any
     signal_pending: Any
     signal_lock: Any

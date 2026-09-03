@@ -4,6 +4,7 @@ import logging
 import queue
 import time
 from collections import defaultdict, deque
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -19,6 +20,16 @@ from .inference_execution import StaleSharedFrameError
 from .shared_frames import SharedFrameStore
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _record_stale_inference_drops(
+    states: Mapping[str, UseCaseCameraState],
+    contexts: Sequence[FrameContext],
+) -> None:
+    """Count every frame discarded with a stale shared-inference batch."""
+
+    for context in contexts:
+        states[context.camera_id].stale_inference_drops.value += 1
 
 
 class UseCaseWorker:
@@ -89,6 +100,7 @@ class UseCaseWorker:
                 except StaleSharedFrameError:
                     # Latest-frame transport intentionally drops work that the
                     # camera has already superseded instead of building backlog.
+                    _record_stale_inference_drops(self.states, contexts)
                     continue
                 batch_latency_ms = (time.perf_counter() - started) * 1000
                 if len(results) != len(frames):
