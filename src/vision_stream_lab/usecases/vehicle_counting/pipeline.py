@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
-from ...inference.detection import create_detection_backend
+from ...inference.detection import DetectionProvider
 from ...schema.use_case import DomainEvent, FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import VehicleCountingConfig
@@ -23,9 +22,13 @@ class CameraRuntime:
 
 
 class VehicleCountingPipeline(UseCasePipeline):
-    def __init__(self, config: VehicleCountingConfig, project_root: Path):
+    def __init__(
+        self,
+        config: VehicleCountingConfig,
+        detector: DetectionProvider,
+    ):
         self.config = config
-        self.detector = create_detection_backend(config.inference, project_root)
+        self.detector = detector
         self.gate = DoubleLineGate(config.lifecycle)
         self.cameras: dict[str, CameraRuntime] = {}
 
@@ -44,7 +47,6 @@ class VehicleCountingPipeline(UseCasePipeline):
         images: list[np.ndarray],
         contexts: list[FrameContext] | None = None,
     ) -> list[UseCaseResult]:
-        predictions = self.detector.predict_batch(images)
         if contexts is None:
             now = time.time()
             contexts = [
@@ -53,6 +55,7 @@ class VehicleCountingPipeline(UseCasePipeline):
             ]
         if len(contexts) != len(images):
             raise ValueError("Frame contexts must match image batch size")
+        predictions = self.detector.predict_batch(images, contexts)
 
         results = []
         for image, prediction, context in zip(images, predictions, contexts):

@@ -140,6 +140,9 @@ def create_app(
                             "rendered": int(use_state.rendered_frames.value),
                             "events": int(use_state.events.value),
                             "dropped_signals": int(use_state.dropped_signals.value),
+                            "stale_inference_drops": int(
+                                use_state.stale_inference_drops.value
+                            ),
                         }
                         for use_case_id, states_by_camera in use_case_states.items()
                         if (use_state := states_by_camera.get(camera_id)) is not None

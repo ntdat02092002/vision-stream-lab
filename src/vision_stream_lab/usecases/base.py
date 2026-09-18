@@ -17,3 +17,6 @@ class UseCasePipeline(ABC):
         contexts: list[FrameContext] | None = None,
     ) -> list[UseCaseResult]:
         """Process a true image batch and return one result per input image."""
+
+    def close(self) -> None:
+        """Optionally release pipeline-owned resources."""

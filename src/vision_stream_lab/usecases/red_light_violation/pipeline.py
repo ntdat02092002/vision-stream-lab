@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
-from ...inference.detection import create_detection_backend
+from ...inference.detection import DetectionProvider
 from ...schema.use_case import DomainEvent, FrameContext, UseCaseResult
 from ..base import UseCasePipeline
 from .config import RedLightViolationConfig
@@ -77,9 +76,13 @@ def _resolve_box_states(
 
 
 class RedLightViolationPipeline(UseCasePipeline):
-    def __init__(self, config: RedLightViolationConfig, project_root: Path):
+    def __init__(
+        self,
+        config: RedLightViolationConfig,
+        detector: DetectionProvider,
+    ):
         self.config = config
-        self.detector = create_detection_backend(config.inference, project_root)
+        self.detector = detector
         self.gate = ViolationCheckingGate(config.lifecycle)
         self.cameras: dict[str, CameraRuntime] = {}
         self.traffic_light_classifier = TrafficLightClassifier()
@@ -103,7 +106,6 @@ class RedLightViolationPipeline(UseCasePipeline):
         images: list[np.ndarray],
         contexts: list[FrameContext] | None = None,
     ) -> list[UseCaseResult]:
-        predictions = self.detector.predict_batch(images)
         if contexts is None:
             now = time.time()
             contexts = [
@@ -112,6 +114,7 @@ class RedLightViolationPipeline(UseCasePipeline):
             ]
         if len(contexts) != len(images):
             raise ValueError("Frame contexts must match image batch size")
+        predictions = self.detector.predict_batch(images, contexts)
 
         results = []
         for image, prediction, context in zip(images, predictions, contexts):

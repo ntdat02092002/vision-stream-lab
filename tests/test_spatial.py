@@ -1,5 +1,4 @@
 import multiprocessing as mp
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -175,21 +174,26 @@ class StubDetector:
     def __init__(self, boxes):
         self.boxes = boxes
 
-    def predict_batch(self, images):
+    def predict_batch(self, images, contexts=None):
         return tuple(DetectionPrediction(boxes=self.boxes.copy()) for _ in images)
+
+    def close(self):
+        return None
 
 
 def test_pipeline_filters_events_and_publishes_zone_geometry():
     config = make_spatial_config()
-    pipeline = ObjectDetectionPipeline(config, Path.cwd())
-    pipeline.detector = StubDetector(
-        np.array(
+    pipeline = ObjectDetectionPipeline(
+        config,
+        StubDetector(
+            np.array(
             [
                 [10, 10, 70, 90, 0, 0.9],
                 [120, 10, 180, 90, 0, 0.8],
             ],
             dtype=np.float32,
-        )
+            )
+        ),
     )
 
     result = pipeline.process_batch(

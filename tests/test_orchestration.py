@@ -2,6 +2,8 @@ import multiprocessing as mp
 from pathlib import Path
 
 from vision_stream_lab.runtime import SharedFrameStore, UseCaseOrchestrator
+from vision_stream_lab.runtime.shared_frames import create_use_case_states
+from vision_stream_lab.runtime.use_case_worker import _record_stale_inference_drops
 from vision_stream_lab.schema.camera import CameraDefinition
 from vision_stream_lab.schema.config import (
     AppConfig,
@@ -10,6 +12,7 @@ from vision_stream_lab.schema.config import (
     MonitoringConfig,
     UseCaseDeploymentConfig,
 )
+from vision_stream_lab.schema.use_case import FrameContext
 from vision_stream_lab.usecases.object_detection.config import ObjectDetectionConfig
 
 
@@ -49,3 +52,23 @@ def test_main_process_routes_only_to_assigned_use_cases():
     finally:
         orchestrator.close()
         raw_store.close(unlink=True)
+
+
+def test_stale_shared_inference_counts_every_discarded_frame():
+    context = mp.get_context("spawn")
+    states = create_use_case_states(
+        context,
+        ["cam-a", "cam-b"],
+        {"cam-a": None, "cam-b": None},
+    )
+
+    _record_stale_inference_drops(
+        states,
+        [
+            FrameContext("cam-a", 10, 1.0),
+            FrameContext("cam-b", 20, 1.0),
+        ],
+    )
+
+    assert states["cam-a"].stale_inference_drops.value == 1
+    assert states["cam-b"].stale_inference_drops.value == 1

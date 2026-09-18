@@ -51,6 +51,7 @@ def build_monitoring_fixture():
             {camera_id: None},
         )
     }
+    use_case_states[use_case_id][camera_id].stale_inference_drops.value = 3
     raw_store.slots[camera_id].write(np.full(config.frame.shape, 80, dtype=np.uint8), 1.0)
     output_store.slots[camera_id].write(
         np.full(config.frame.shape, 160, dtype=np.uint8), 2.0
@@ -95,6 +96,9 @@ def test_camera_wall_assets_status_and_snapshot_endpoints():
             "source": "runtime.worker_defaults.batch_size",
         }
         assert "batch_size" not in status
+        assert status["cameras"][0]["use_cases"]["object-detection"][
+            "stale_inference_drops"
+        ] == 3
 
         snapshot = client.get(
             "/api/cameras/camera-01/frame.jpg?use_case=object-detection"

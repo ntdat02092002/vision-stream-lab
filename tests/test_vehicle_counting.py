@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from vision_stream_lab.inference.detection import LocalDetectionProvider
 from vision_stream_lab.inference.detection.noop.config import NoopDetectionConfig
 from vision_stream_lab.schema.use_case import FrameContext
 from vision_stream_lab.usecases import get_plugin, registered_use_cases
@@ -212,7 +213,8 @@ def test_bytetrack_adapter_confirms_track_and_estimates_velocity():
 
 def test_pipeline_contract_with_noop_backend_and_per_camera_state():
     config = parse_vehicle_counting_config(raw_config())
-    pipeline = VehicleCountingPipeline(config, Path.cwd())
+    detector = LocalDetectionProvider(config.inference, Path.cwd())
+    pipeline = VehicleCountingPipeline(config, detector)
     images = [np.zeros((100, 200, 3), dtype=np.uint8) for _ in range(2)]
     contexts = [
         FrameContext(camera_id="camera-01", sequence=1, timestamp=1.0),
@@ -224,6 +226,7 @@ def test_pipeline_contract_with_noop_backend_and_per_camera_state():
     assert all(result.output_frame.dtype == np.uint8 for result in results)
     assert all(result.event_count == 0 for result in results)
     assert set(pipeline.cameras) == {"camera-01", "camera-02"}
+    detector.close()
 
 
 def test_shared_state_round_trip_and_rendering_ttl_behavior():

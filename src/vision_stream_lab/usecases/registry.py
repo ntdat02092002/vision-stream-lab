@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 
+from ..inference.bindings import InferenceBinding
+from ..inference.services import InferenceServices
 from ..schema.config import UseCaseDeploymentConfig
 from ..schema.use_case import FrameContext, UseCaseResult
 from .base import UseCasePipeline
@@ -66,8 +68,28 @@ def parse_plugin_config(
 def create_pipeline(
     config: UseCaseDeploymentConfig,
     project_root: Path,
+    services: InferenceServices,
 ) -> UseCasePipeline:
-    return get_plugin(config.type).create_pipeline(config.plugin_config, project_root)
+    return get_plugin(config.type).create_pipeline(
+        config.plugin_config,
+        project_root,
+        services,
+    )
+
+
+def inference_bindings(
+    config: UseCaseDeploymentConfig,
+) -> Mapping[str, InferenceBinding]:
+    factory = get_plugin(config.type).inference_bindings
+    bindings = {} if factory is None else dict(factory(config.plugin_config))
+    for name, binding in bindings.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{config.type} inference binding names must be non-empty strings")
+        if not isinstance(binding, InferenceBinding):
+            raise TypeError(
+                f"{config.type} inference binding {name!r} must be InferenceBinding"
+            )
+    return bindings
 
 
 def create_shared_state(config: UseCaseDeploymentConfig, context: Any) -> Any:

@@ -36,8 +36,12 @@ def test_load_example_config():
     assert config.monitoring.render_mode is OutputRenderMode.DELAYED_MATCHED
     assert config.monitoring.alignment_delay_ms == 250
     assert config.monitoring.frame_buffer_size == 16
-    deployment = config.deployments[0]
-    assert deployment.id == "red-light-violation-cam-04"
+    deployments = {deployment.id: deployment for deployment in config.deployments}
+    assert set(deployments) == {
+        "vehicle-counting",
+        "red-light-violation-cam-04",
+    }
+    deployment = deployments["red-light-violation-cam-04"]
     assert deployment.plugin_config.tracker.frame_rate == 6.0
     assert isinstance(
         deployment.plugin_config.inference,
@@ -46,7 +50,7 @@ def test_load_example_config():
     assert deployment.plugin_config.inference.confidence == 0.1
     assert deployment.plugin_config.inference.classes == [3]
     assert set(deployment.plugin_config.spatial.cameras) == {"camera-04"}
-    assert deployment.alert.enabled
+    assert not deployment.alert.enabled
     assert deployment.alert.evidence.pre_seconds == 10
     assert deployment.alert.evidence.post_seconds == 10
     assert deployment.runtime.batch_size == 4
@@ -57,11 +61,25 @@ def test_load_example_config():
     assert deployment.runtime_source("batch_wait_ms") == (
         "runtime.worker_defaults.batch_wait_ms"
     )
-    assert [camera.id for camera in config.cameras] == ["camera-04"]
+    assert [camera.id for camera in config.cameras] == [
+        "camera-01",
+        "camera-02",
+        "camera-03",
+        "camera-04",
+    ]
     assert deployment.type == "red_light_violation"
     assert deployment.accepts_camera("camera-04")
     assert not deployment.accepts_camera("camera-01")
-    assert Path(config.cameras[0].source).is_absolute()
+    assert all(Path(camera.source).is_absolute() for camera in config.cameras)
+
+    vehicle_counting = deployments["vehicle-counting"]
+    assert vehicle_counting.cameras == ("camera-01", "camera-02", "camera-03")
+    assert vehicle_counting.plugin_config.inference.classes == [2, 3, 5, 7]
+    assert set(vehicle_counting.plugin_config.spatial.cameras) == {
+        "camera-01",
+        "camera-02",
+        "camera-03",
+    }
 
 
 def test_output_render_modes_are_normalized():
@@ -123,7 +141,11 @@ def test_deployment_runtime_override_is_resolved_and_traced(tmp_path):
     )
 
     config = load_config(config_root / "app.yaml")
-    deployment = config.deployments[0]
+    deployment = next(
+        deployment
+        for deployment in config.deployments
+        if deployment.id == "red-light-violation-cam-04"
+    )
     assert deployment.runtime.batch_size == 2
     assert deployment.runtime.batch_wait_ms == 12
     assert deployment.runtime_source("batch_size") == (
@@ -138,8 +160,8 @@ def test_legacy_deployment_fields_have_actionable_migration_error(tmp_path):
     deployments_path = config_root / "deployments.yaml"
     deployments_path.write_text(
         deployments_path.read_text().replace(
-            "  cameras: [camera-01]\n",
-            "  cameras: [camera-01]\n  scheduling: {}\n",
+            "  cameras: [camera-01, camera-02, camera-03]\n",
+            "  cameras: [camera-01, camera-02, camera-03]\n  scheduling: {}\n",
         ),
         encoding="utf-8",
     )
@@ -210,6 +232,7 @@ person-detection:
     deployments = {deployment.id: deployment for deployment in config.deployments}
 
     assert set(deployments) == {
+        "vehicle-counting",
         "red-light-violation-cam-04",
         "object-detection-test",
         "person-detection",
